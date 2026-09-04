@@ -1,0 +1,18 @@
+[package]
+name = "termdemo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
+overflow-checks = false
+
+[profile.dev]
+panic = "abort"
+
