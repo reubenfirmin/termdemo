@@ -44,8 +44,18 @@ const SCENE_4: f32 = 44.0;
 const SCENE_5: f32 = 90.0;
 const DESCENT: f32 = 113.0;
 const SCENE_6: f32 = 137.0;
-const PLANET_REVEAL: f32 = SCENE_3 + 3.6;
-const APPROACH_SPEED: f32 = 0.08;
+const PLANET_INTRO: f32 = 27.0;
+const APPROACH_SPEED: f32 = 0.28;
+const ORBIT_ENTRY: f32 = 28.0;
+const GRAVITY_WELL_DEPTH: f32 = 0.72;
+const FLOW_FOCAL: f32 = 154.0;
+const FLOW_PLANET_RADIUS: f32 = 0.115;
+const FLOW_ORBIT_RADIUS: f32 = FLOW_PLANET_RADIUS * (13_600.0 / 13_500.0);
+const FLOW_ORBIT_HEIGHT: f32 = FLOW_PLANET_RADIUS * 0.95;
+const FLOW_ORBIT_TURNS: f32 = 5.0;
+const FLOW_ORBIT_BRAKE: f32 = 6.0;
+const FLOW_ORBIT_RAMP: f32 = 4.0;
+const FLOW_CLOSE_ORBIT_TIME: f32 = 45.918_52;
 
 const SYS_READ: usize = 0;
 const SYS_WRITE: usize = 1;
@@ -108,6 +118,7 @@ struct Vec3 {
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 struct CameraPose {
     position: Vec3,
     forward: Vec3,
@@ -116,9 +127,35 @@ struct CameraPose {
     altitude: f32,
 }
 
+#[derive(Clone, Copy)]
+struct GridPlanetView {
+    visible: f32,
+    x: f32,
+    y: f32,
+    well_y: f32,
+    radius_x: f32,
+    radius_y: f32,
+    well_radius: f32,
+}
+
+#[derive(Clone, Copy)]
+struct FlowCamera {
+    position: Vec3,
+    forward: Vec3,
+    right: Vec3,
+    down: Vec3,
+    planet: Vec3,
+    world_shift: Vec3,
+    geometry_time: f32,
+}
+
 const PLANET_RADIUS: f32 = 1_000.0;
 const GRID_FLOOR_Z: f32 = -1_000.0;
-const PLANET_CENTER: Vec3 = Vec3 { x: 0.0, y: 9_000.0, z: -1_250.0 };
+const PLANET_CENTER: Vec3 = Vec3 {
+    x: 0.0,
+    y: 9_000.0,
+    z: GRID_FLOOR_Z - PLANET_RADIUS * 0.5,
+};
 const APPROACH_CENTER: Vec3 = Vec3 { x: 0.0, y: 9_000.0, z: -1_000.0 };
 const SUN_DIRECTION: Vec3 = Vec3 { x: -0.550, y: 0.250, z: 0.797 };
 const ORBIT_END: f32 = 105.0;
@@ -358,6 +395,7 @@ fn terrain_smooth(x: f32, y: f32) -> f32 {
     smooth_map(core::ptr::addr_of!(TERRAIN).cast::<u8>(), x, y)
 }
 
+#[allow(dead_code)]
 fn light_smooth(x: f32, y: f32) -> f32 {
     smooth_map(core::ptr::addr_of!(LIGHT).cast::<u8>(), x, y)
 }
@@ -380,9 +418,264 @@ fn smooth_map(map: *const u8, x: f32, y: f32) -> f32 {
 }
 
 fn render_demo(elapsed: f32, planet_aspect: f32) {
-    render_continuous_grid(elapsed);
-    render_world_journey(elapsed, planet_aspect);
+    let camera = journey_camera(elapsed);
+    let flow = flow_camera(elapsed);
+    let planet = grid_planet_view(elapsed, planet_aspect);
+    render_continuous_grid(elapsed, flow, planet);
+    render_world_journey(elapsed, planet_aspect, &camera, flow, planet);
     draw_second_counter(elapsed);
+}
+
+fn grid_planet_view(time: f32, x_scale: f32) -> GridPlanetView {
+    let fixed_y = travel_row(PLANET_INTRO);
+    let depth = travel_row(time) - fixed_y;
+    if depth <= 0.0 {
+        return GridPlanetView {
+            visible: 0.0,
+            x: 160.0,
+            y: 100.0,
+            well_y: 100.0,
+            radius_x: 0.0,
+            radius_y: 0.0,
+            well_radius: 1.0,
+        };
+    }
+    let shape = birth_shape(fixed_y);
+    let center = grid_depth_point(-7.0, depth, shape);
+    let scale = (depth / 20.0) * (depth / 20.0) * 260.0;
+    let radius_y = scale * 0.115;
+    let visible = smoothstep(radius_y / 2.0);
+    let well_radius = (radius_y * 5.5).clamp(8.0, 130.0);
+    // The planet's equator follows the deformed floor, rather than the
+    // undeformed mesh. At the exact well center, floor_weight and the radial
+    // influence are both one half of their maximum.
+    let center_depression = visible * well_radius * GRAVITY_WELL_DEPTH * 0.5;
+    GridPlanetView {
+        visible,
+        x: center.0,
+        y: center.1 + center_depression,
+        well_y: center.1,
+        radius_x: radius_y * x_scale,
+        radius_y,
+        well_radius,
+    }
+}
+
+fn flow_depth(depth: f32) -> f32 {
+    let radius = (depth / 20.0) * (depth / 20.0) * 260.0;
+    FLOW_FOCAL / radius.max(0.001)
+}
+
+fn lift_grid_point(point: (f32, f32), depth: f32) -> Vec3 {
+    let z = flow_depth(depth);
+    Vec3 {
+        x: (point.0 - 160.0) * z / FLOW_FOCAL,
+        y: (point.1 - 100.0) * z / FLOW_FOCAL,
+        z,
+    }
+}
+
+fn flow_planet_center(time: f32) -> Vec3 {
+    let depth = travel_row(time) - travel_row(PLANET_INTRO);
+    let view = grid_planet_view(time, 1.0);
+    lift_grid_point((view.x, view.y), depth.max(0.001))
+}
+
+fn flow_entry_speed() -> f32 {
+    let sample = 0.005;
+    vec_length(vec_sub(
+        flow_planet_center(ORBIT_ENTRY + sample),
+        flow_planet_center(ORBIT_ENTRY - sample),
+    )) / (sample * 2.0)
+}
+
+fn flow_orbit_weight(time: f32) -> f32 {
+    smoothstep(time / FLOW_ORBIT_RAMP)
+        * FLOW_ORBIT_BRAKE / (FLOW_ORBIT_BRAKE + time)
+}
+
+fn flow_orbit_phase(elapsed: f32) -> f32 {
+    const STEPS: usize = 128;
+    let duration = ORBIT_END - ORBIT_ENTRY;
+    let step_time = duration / STEPS as f32;
+    let mut total_weight = 0.0;
+    let mut elapsed_weight = 0.0;
+    let mut step = 0usize;
+    while step < STEPS {
+        let step_start = step as f32 * step_time;
+        let full_sample = step_start + step_time * 0.5;
+        total_weight += flow_orbit_weight(full_sample) * step_time;
+        let covered = (elapsed - step_start).clamp(0.0, step_time);
+        let elapsed_sample = step_start + covered * 0.5;
+        elapsed_weight += flow_orbit_weight(elapsed_sample) * covered;
+        step += 1;
+    }
+    FLOW_ORBIT_TURNS * 1_024.0 * elapsed_weight / total_weight.max(0.001)
+}
+
+fn flow_spiral_distance(elapsed: f32, entry_distance: f32, entry_speed: f32) -> f32 {
+    let duration = FLOW_CLOSE_ORBIT_TIME;
+    let span = entry_distance - FLOW_ORBIT_RADIUS;
+    // A normalized reciprocal preserves the incoming radial speed, brakes
+    // immediately without a kink, and retains a long inward tail through the
+    // fourth revolution instead of snapping onto the final orbit.
+    let rate = (entry_speed / span.max(0.001) - 1.0 / duration).max(0.001);
+    let end_reciprocal = 1.0 / (1.0 + rate * duration);
+    let reciprocal = 1.0 / (1.0 + rate * elapsed.clamp(0.0, duration));
+    let mut remaining = (reciprocal - end_reciprocal) / (1.0 - end_reciprocal);
+    // Bring the last three percent of the radial journey into close orbit
+    // with matching position, velocity and acceleration at both ends.
+    const TAIL: f32 = 0.03;
+    if remaining < TAIL {
+        let u = (remaining / TAIL).clamp(0.0, 1.0);
+        let u2 = u * u;
+        let u3 = u2 * u;
+        let u4 = u3 * u;
+        let u5 = u4 * u;
+        remaining = TAIL * (3.0 * u5 - 8.0 * u4 + 6.0 * u3);
+    }
+    FLOW_ORBIT_RADIUS + span * remaining
+}
+
+fn flow_geometry_time(elapsed: f32) -> f32 {
+    const COAST: f32 = 4.0;
+    let progress = (elapsed / COAST).clamp(0.0, 1.0);
+    let p2 = progress * progress;
+    let p3 = p2 * progress;
+    let p4 = p3 * progress;
+    let p5 = p4 * progress;
+    let p6 = p5 * progress;
+    // Integral of one minus smootherstep. Velocity begins at one, reaches
+    // zero with zero acceleration, and never introduces a grid-motion kink.
+    ORBIT_ENTRY + COAST * (progress - p6 + 3.0 * p5 - 2.5 * p4)
+}
+
+fn flow_relative_position(
+    elapsed: f32,
+    entry_planet: Vec3,
+    entry_distance: f32,
+    entry_speed: f32,
+) -> Vec3 {
+    let distance = flow_spiral_distance(elapsed, entry_distance, entry_speed);
+    let capture = ((entry_distance - distance)
+        / (entry_distance - FLOW_ORBIT_RADIUS).max(0.001))
+        .clamp(0.0, 1.0);
+    let height = entry_planet.y
+        + (FLOW_ORBIT_HEIGHT - entry_planet.y) * smoothstep(capture);
+    let horizontal_radius = fast_sqrt((distance * distance - height * height).max(0.000_001));
+    let phase = flow_orbit_phase(elapsed);
+    Vec3 {
+        x: horizontal_radius * sine_sample(phase),
+        y: -height,
+        z: -horizontal_radius * sine_sample(phase + 256.0),
+    }
+}
+
+fn flow_camera(time: f32) -> Option<FlowCamera> {
+    if time < ORBIT_ENTRY {
+        return None;
+    }
+    let entry_planet = flow_planet_center(ORBIT_ENTRY);
+    let planet = flow_planet_center(time);
+    let entry_distance = vec_length(entry_planet);
+    let entry_speed = flow_entry_speed();
+    let elapsed = (time - ORBIT_ENTRY).clamp(0.0, ORBIT_END - ORBIT_ENTRY);
+    let geometry_time = flow_geometry_time(elapsed);
+    let geometry_planet = flow_planet_center(geometry_time);
+    let relative = flow_relative_position(elapsed, entry_planet, entry_distance, entry_speed);
+    let position = vec_add(planet, relative);
+    let sample = 0.01;
+    let before = flow_relative_position(
+        (elapsed - sample).max(0.0), entry_planet, entry_distance, entry_speed,
+    );
+    let after = flow_relative_position(
+        (elapsed + sample).min(ORBIT_END - ORBIT_ENTRY),
+        entry_planet, entry_distance, entry_speed,
+    );
+    let velocity = if elapsed <= 0.0 {
+        Vec3 { x: 0.0, y: 0.0, z: 1.0 }
+    } else {
+        vec_normalize(vec_sub(after, before))
+    };
+    let toward_planet = vec_normalize(vec_scale(relative, -1.0));
+    let world_down = Vec3 { x: 0.0, y: 1.0, z: 0.0 };
+    let horizontal_radial = Vec3 { x: relative.x, y: 0.0, z: relative.z };
+    let orbit_tangent = vec_normalize(vec_cross(horizontal_radial, world_down));
+    let orbit_progress = flow_orbit_phase(elapsed) / (FLOW_ORBIT_TURNS * 1_024.0);
+    let horizon_attitude = smootherstep((orbit_progress - 0.50) / 0.30);
+    let framed_forward = vec_normalize(vec_add(
+        vec_scale(orbit_tangent, 0.544 + (1.0 - 0.544) * horizon_attitude),
+        vec_scale(toward_planet, 0.839 * (1.0 - horizon_attitude)),
+    ));
+    let framing = smootherstep(elapsed / 5.0);
+    let forward = vec_normalize(vec_add(
+        vec_scale(velocity, 1.0 - framing),
+        vec_scale(framed_forward, framing),
+    ));
+    let grid_down = vec_normalize(vec_sub(
+        world_down,
+        vec_scale(forward, vec_dot(world_down, forward)),
+    ));
+    let planet_down = vec_normalize(vec_sub(
+        toward_planet,
+        vec_scale(forward, vec_dot(toward_planet, forward)),
+    ));
+    let down = vec_normalize(vec_add(
+        vec_scale(grid_down, 1.0 - framing),
+        vec_scale(planet_down, framing),
+    ));
+    let right = vec_normalize(vec_cross(down, forward));
+    Some(FlowCamera {
+        position,
+        forward,
+        right,
+        down,
+        planet,
+        world_shift: vec_sub(planet, geometry_planet),
+        geometry_time,
+    })
+}
+
+fn project_flow(camera: &FlowCamera, point: Vec3) -> Option<(f32, f32)> {
+    let relative = vec_sub(point, camera.position);
+    let depth = vec_dot(relative, camera.forward);
+    if depth <= 0.001 {
+        return None;
+    }
+    Some((
+        160.0 + vec_dot(relative, camera.right) / depth * FLOW_FOCAL,
+        100.0 + vec_dot(relative, camera.down) / depth * FLOW_FOCAL,
+    ))
+}
+
+fn project_flow_grid_segment(
+    screen_a: (f32, f32),
+    depth_a: f32,
+    screen_b: (f32, f32),
+    depth_b: f32,
+    flow: Option<FlowCamera>,
+) -> Option<((f32, f32), (f32, f32))> {
+    let Some(camera) = flow else {
+        return Some((screen_a, screen_b));
+    };
+    let mut a = vec_add(lift_grid_point(screen_a, depth_a), camera.world_shift);
+    let mut b = vec_add(lift_grid_point(screen_b, depth_b), camera.world_shift);
+    let near = 0.001_1;
+    let camera_depth_a = vec_dot(vec_sub(a, camera.position), camera.forward);
+    let camera_depth_b = vec_dot(vec_sub(b, camera.position), camera.forward);
+    if camera_depth_a <= near && camera_depth_b <= near {
+        return None;
+    }
+    if camera_depth_a <= near {
+        let amount = (near - camera_depth_a)
+            / (camera_depth_b - camera_depth_a).max(0.000_001);
+        a = vec_add(a, vec_scale(vec_sub(b, a), amount));
+    } else if camera_depth_b <= near {
+        let amount = (near - camera_depth_b)
+            / (camera_depth_a - camera_depth_b).max(0.000_001);
+        b = vec_add(b, vec_scale(vec_sub(a, b), amount));
+    }
+    Some((project_flow(&camera, a)?, project_flow(&camera, b)?))
 }
 
 fn draw_second_counter(elapsed: f32) {
@@ -455,6 +748,19 @@ fn draw_second_counter(elapsed: f32) {
 fn smoothstep(value: f32) -> f32 {
     let value = value.clamp(0.0, 1.0);
     value * value * (3.0 - 2.0 * value)
+}
+
+fn smootherstep(value: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    value * value * value * (value * (value * 6.0 - 15.0) + 10.0)
+}
+
+fn grid_fog_range(time: f32) -> (f32, f32) {
+    let distant_detail = smoothstep((time - (PLANET_INTRO - 1.0)) / 2.0);
+    (
+        GRID_FOG_START + (1.0 - GRID_FOG_START) * distant_detail,
+        GRID_FOG_END + (3.0 - GRID_FOG_END) * distant_detail,
+    )
 }
 
 fn parse_audit_time(bytes: &[u8]) -> f32 {
@@ -563,88 +869,85 @@ fn visible_planet_relief(normal: Vec3, altitude: f32, time: f32) -> f32 {
     planet_relief(normal) * relief_visibility(time, altitude)
 }
 
-fn orbit_altitude_and_speed(progress: f32) -> (f32, f32) {
-    let orbit_start = 0.08;
-    let initial_speed = 66_000.0 / (ORBIT_END - SCENE_3);
-    if progress <= orbit_start {
-        let remaining = 1.0 - progress;
-        return (
-            60.0 + 22_000.0 * remaining * remaining * remaining,
-            initial_speed * remaining * remaining,
-        );
-    }
-    let orbit_progress = (progress - orbit_start) / (1.0 - orbit_start);
-    let remaining = 1.0 - orbit_progress;
-    let smooth = orbit_progress * orbit_progress * (3.0 - 2.0 * orbit_progress);
-    let compression = 1.0 - 0.95 * smooth;
-    let compression_derivative = -0.95 * (6.0 * orbit_progress - 6.0 * orbit_progress * orbit_progress);
-    let altitude_span = 22_000.0 * (1.0 - orbit_start) * (1.0 - orbit_start)
-        * (1.0 - orbit_start);
-    let altitude = 60.0 + altitude_span * remaining * remaining * remaining * compression;
-    let derivative = altitude_span
-        * (-3.0 * remaining * remaining * compression
-            + remaining * remaining * remaining * compression_derivative);
-    let duration = (ORBIT_END - SCENE_3) * (1.0 - orbit_start);
-    (altitude, -derivative / duration)
+fn orbit_total_speed(elapsed: f32) -> f32 {
+    let entry_speed = 66_000.0 / (ORBIT_END - ORBIT_ENTRY);
+    let braking = smoothstep(elapsed / (ORBIT_END - ORBIT_ENTRY));
+    let orbital_speed = entry_speed + (365.263 - entry_speed) * braking;
+    let landing_brake = smoothstep((elapsed - 69.0) / 8.0);
+    orbital_speed + (3.45 / SURFACE_SCALE - orbital_speed) * landing_brake
 }
 
-fn orbit_phase_units(progress: f32) -> f32 {
-    // Integrate angular velocity from a monotonically decreasing total-speed
-    // profile. Radial velocity is supplied by the altitude curve; the balance
-    // becomes tangential velocity, so the ship bends into orbit without first
-    // slowing and then accelerating again.
-    const STEPS: usize = 128;
-    let orbit_start = 0.08;
-    if progress <= orbit_start {
-        return 6.0;
+fn orbit_radial_speed(elapsed: f32) -> f32 {
+    let entry_speed = 66_000.0 / (ORBIT_END - ORBIT_ENTRY);
+    if elapsed < 2.0 {
+        return entry_speed * (1.0 - 0.29 * smoothstep(elapsed / 2.0));
     }
-    let orbit_progress = (progress - orbit_start) / (1.0 - orbit_start);
-    let initial_speed = 66_000.0 / (ORBIT_END - SCENE_3);
-    let terminal_speed = 3.45 / SURFACE_SCALE;
-    let orbit_initial_speed = initial_speed * (1.0 - orbit_start) * (1.0 - orbit_start);
-    let speed_shape = 0.070_891_42;
+    if elapsed < 33.741_783 {
+        return entry_speed * 0.71;
+    }
+    if elapsed < 37.741_783 {
+        return entry_speed * 0.71
+            * (1.0 - smoothstep((elapsed - 33.741_783) / 4.0));
+    }
+    0.0
+}
+
+fn orbit_radius(elapsed: f32) -> f32 {
+    let entry_speed = 66_000.0 / (ORBIT_END - ORBIT_ENTRY);
+    let distance = if elapsed <= 2.0 {
+        let progress = (elapsed / 2.0).clamp(0.0, 1.0);
+        entry_speed
+            * (elapsed
+                - 0.58 * (progress * progress * progress
+                    - 0.5 * progress * progress * progress * progress))
+    } else if elapsed <= 33.741_783 {
+        entry_speed * (1.71 + (elapsed - 2.0) * 0.71)
+    } else {
+        let progress = ((elapsed - 33.741_783) / 4.0).clamp(0.0, 1.0);
+        entry_speed
+            * (1.71
+                + 31.741_783 * 0.71
+                + 2.84
+                    * (progress - progress * progress * progress
+                        + 0.5 * progress * progress * progress * progress))
+    };
+    (PLANET_RADIUS + 22_060.0 - distance).max(PLANET_RADIUS + 60.0)
+}
+
+fn orbit_phase_units(elapsed: f32) -> f32 {
+    const STEPS: usize = 128;
+    let duration = ORBIT_END - ORBIT_ENTRY;
+    let progress = (elapsed / duration).clamp(0.0, 1.0);
+    let complete_steps = (progress * STEPS as f32) as usize;
+    let step_time = duration / STEPS as f32;
     let mut radians = 0.0;
     let mut step = 0usize;
-    let complete_steps = (orbit_progress * STEPS as f32) as usize;
     while step < complete_steps.min(STEPS) {
-        let sample_progress = (step as f32 + 0.5) / STEPS as f32;
-        let sample = orbit_start + sample_progress * (1.0 - orbit_start);
-        let (altitude, radial_speed) = orbit_altitude_and_speed(sample);
-        let radius = PLANET_RADIUS + altitude;
-        let orbit_remaining = 1.0 - sample_progress;
-        let speed_fraction = orbit_remaining
-            / (speed_shape + (1.0 - speed_shape) * orbit_remaining);
-        let total_speed = terminal_speed
-            + (orbit_initial_speed - terminal_speed) * speed_fraction;
+        let sample = (step as f32 + 0.5) * step_time;
+        let total_speed = orbit_total_speed(sample);
+        let radial_speed = orbit_radial_speed(sample).min(total_speed);
         let tangent_speed = fast_sqrt(
             (total_speed * total_speed - radial_speed * radial_speed).max(0.0),
         );
-        radians += tangent_speed / radius
-            * (ORBIT_END - SCENE_3) * (1.0 - orbit_start)
-            / STEPS as f32;
+        radians += tangent_speed / orbit_radius(sample) * step_time;
         step += 1;
     }
     if complete_steps < STEPS {
-        let completed = complete_steps as f32 / STEPS as f32;
-        let partial = orbit_progress - completed;
-        if partial > 0.0 {
-            let sample_progress = completed + partial * 0.5;
-            let sample = orbit_start + sample_progress * (1.0 - orbit_start);
-            let (altitude, radial_speed) = orbit_altitude_and_speed(sample);
-            let radius = PLANET_RADIUS + altitude;
-            let orbit_remaining = 1.0 - sample_progress;
-            let speed_fraction = orbit_remaining
-                / (speed_shape + (1.0 - speed_shape) * orbit_remaining);
-            let total_speed = terminal_speed
-                + (orbit_initial_speed - terminal_speed) * speed_fraction;
+        let completed_time = complete_steps as f32 * step_time;
+        let partial_time = elapsed.clamp(0.0, duration) - completed_time;
+        if partial_time > 0.0 {
+            let sample = completed_time + partial_time * 0.5;
+            let total_speed = orbit_total_speed(sample);
+            let radial_speed = orbit_radial_speed(sample).min(total_speed);
             let tangent_speed = fast_sqrt(
                 (total_speed * total_speed - radial_speed * radial_speed).max(0.0),
             );
-            radians += tangent_speed / radius
-                * (ORBIT_END - SCENE_3) * (1.0 - orbit_start) * partial;
+            radians += tangent_speed / orbit_radius(sample) * partial_time;
         }
     }
-    6.0 + radians * 271.934_5
+    // Includes the small fast_sqrt bias so the third orbit lands exactly on
+    // the terrain-flight meridian without a directional handoff.
+    6.0 + radians * 163.102_9
 }
 
 fn pre_orbit_altitude(elapsed: f32) -> f32 {
@@ -689,15 +992,17 @@ fn journey_position(elapsed: f32) -> (Vec3, f32, f32) {
     }
     if elapsed <= ORBIT_END {
         let progress = ((elapsed - SCENE_3) / (ORBIT_END - SCENE_3)).clamp(0.0, 1.0);
-        let altitude = orbit_altitude_and_speed(progress).0;
-        let phase = orbit_phase_units(progress);
+        let orbit_time = progress * (ORBIT_END - ORBIT_ENTRY);
+        let radius = orbit_radius(orbit_time);
+        let phase = orbit_phase_units(orbit_time);
         let radial = Vec3 {
             x: 0.0,
             y: -sine_sample(phase + 256.0),
             z: sine_sample(phase),
         };
-        let distance = PLANET_RADIUS + visible_planet_relief(radial, altitude, elapsed) + altitude;
-        return (vec_add(journey_center(elapsed), vec_scale(radial, distance)), altitude, progress);
+        let position = vec_add(journey_center(elapsed), vec_scale(radial, radius));
+        let altitude = vec_length(vec_sub(position, PLANET_CENTER)) - PLANET_RADIUS;
+        return (position, altitude, progress);
     }
 
     let local_time = elapsed - ORBIT_END;
@@ -733,10 +1038,10 @@ fn journey_camera(elapsed: f32) -> CameraPose {
     let radial_up = vec_normalize(vec_sub(position, journey_center(elapsed)));
     let down = vec_scale(radial_up, -1.0);
     let look_down = if elapsed <= ORBIT_END {
-        0.78 - progress * 0.06
+        0.78 + progress * 0.03
     } else {
         let landscape = smoothstep((elapsed - ORBIT_END) / (SCENE_6 - ORBIT_END));
-        0.72 - landscape * 0.64
+        0.81 - landscape * 0.73
     };
     let forward = vec_normalize(vec_add(
         vec_scale(velocity, 1.0 - look_down),
@@ -768,53 +1073,283 @@ fn project_world(camera: &CameraPose, point: Vec3, x_scale: f32) -> Option<(f32,
     ))
 }
 
-fn grid_floor_height(x: f32, y: f32) -> f32 {
+fn world_grid_point(lane: f32, y: f32, time: f32) -> Vec3 {
+    let angle = ((lane + 14.0) * 1_024.0 / 28.0) as i32;
+    let circle_x = sine(angle + 256);
+    let circle_z = sine(angle);
+    let edge = circle_x.abs().max(circle_z.abs()).max(0.001);
+    let square_x = circle_x / edge;
+    let square_z = circle_z / edge;
+    let shape = smoothstep((time - SCENE_2) / (SCENE_3 - SCENE_2));
+    let section_x = circle_x + (square_x - circle_x) * shape;
+    let section_z = circle_z + (square_z - circle_z) * shape;
+    let half_width = 3_250.0 + shape * 2_250.0;
+    let middle_z = 0.0;
+    let half_height = 1_000.0;
+    let x = section_x * half_width;
+    let mut z = middle_z - section_z * half_height;
+    let bottom = smoothstep((section_z - 0.92) / 0.08);
     let dx = x - PLANET_CENTER.x;
     let dy = y - PLANET_CENTER.y;
     let distance = fast_sqrt(dx * dx + dy * dy);
     let well = (1.0 - distance / 2_700.0).clamp(0.0, 1.0);
-    GRID_FLOOR_Z - well * well * 700.0
+    z -= bottom * well * well * 500.0;
+    Vec3 { x, y, z }
 }
 
-fn grid_half_width(y: f32) -> f32 {
-    let expansion = smoothstep((y + 14_000.0) / 20_500.0);
-    3_600.0 + expansion * 1_900.0
+fn world_line_points(index: usize, camera: &CameraPose, time: f32) -> (Vec3, Vec3) {
+    let spacing = 900.0;
+    let period = spacing * GRID_RINGS as f32;
+    let (lane_a, _, lane_b, _) = line_coordinates(index);
+    let ring = line_ring(index);
+    let base_y = -50_000.0 + ring as f32 * spacing;
+    let relative_cycle = (camera.position.y + 32.0 - base_y) / period;
+    let mut cycle = relative_cycle as i32;
+    if relative_cycle > cycle as f32 {
+        cycle += 1;
+    }
+    let y_a = base_y + cycle as f32 * period;
+    let y_b = if index < SPOKE_LINES { y_a + spacing } else { y_a };
+    (
+        world_grid_point(lane_a, y_a, time),
+        world_grid_point(lane_b, y_b, time),
+    )
 }
 
-fn grid_ceiling(y: f32) -> f32 {
-    let expansion = smoothstep((y + 14_000.0) / 20_500.0);
-    800.0 + expansion * 700.0
+#[allow(dead_code)]
+fn draw_projected_world_line(
+    camera: &CameraPose,
+    a: Vec3,
+    b: Vec3,
+    color: (u8, u8, u8),
+    alpha: u8,
+    x_scale: f32,
+) {
+    let Some(pa) = project_world(camera, a, x_scale) else { return };
+    let Some(pb) = project_world(camera, b, x_scale) else { return };
+    if (pa.0 < -8.0 && pb.0 < -8.0)
+        || (pa.0 > WIDTH as f32 + 8.0 && pb.0 > WIDTH as f32 + 8.0)
+        || (pa.1 < -8.0 && pb.1 < -8.0)
+        || (pa.1 > HEIGHT as f32 + 8.0 && pb.1 > HEIGHT as f32 + 8.0)
+    {
+        return;
+    }
+    draw_line(
+        core::ptr::addr_of_mut!(FRAME).cast::<u8>(),
+        pa.0 as i32,
+        pa.1 as i32,
+        pb.0 as i32,
+        pb.1 as i32,
+        color.0,
+        color.1,
+        color.2,
+        alpha,
+    );
 }
 
-fn world_grid_shape(time: f32, y: f32) -> f32 {
-    let distance_from_emitter = (PLANET_CENTER.y - 2_500.0 - y).max(0.0);
-    let emission_time = SCENE_2 + distance_from_emitter / 4_000.0;
-    smoothstep((time - emission_time) / 2.0)
+#[allow(dead_code)]
+fn render_world_grid_geometry(camera: &CameraPose, time: f32, x_scale: f32) {
+    let spoke_visibility = smoothstep(
+        (time - (STAR_ORGANIZE + 1.5))
+            / (CLEAN_BIRTH - STAR_ORGANIZE - 1.5),
+    );
+    if spoke_visibility <= 0.0 {
+        return;
+    }
+    let lane_step = 28.0 / (GRID_LANES - 1) as f32;
+    let neon = smoothstep((time - SCENE_2) / (GRID_COLOR_FULL - SCENE_2));
+    let mut index = 0usize;
+    while index < STAR_LINES {
+        let (lane_a, _, mut lane_b, _) = line_coordinates(index);
+        if camera.altitude > 5_000.0 {
+            if index < SPOKE_LINES {
+                if (index / GRID_RINGS) & 1 != 0 {
+                    index += 1;
+                    continue;
+                }
+            } else {
+                let lane_segment = (index - SPOKE_LINES) % (GRID_LANES - 1);
+                if lane_segment & 1 != 0 {
+                    index += 1;
+                    continue;
+                }
+                lane_b = (lane_b + lane_step).min(14.0);
+            }
+        }
+        let ring = line_ring(index);
+        let visibility = if index < SPOKE_LINES {
+            spoke_visibility
+        } else {
+            smoothstep((time - ring_birth(ring)) / 0.45)
+        };
+        if visibility > 0.0 {
+            let luminosity = hash(index as i32, 149) as f32 / 255.0;
+            let color = lit_mesh_color(
+                index as i32,
+                mesh_accent((lane_a + lane_b) * 0.5),
+                neon,
+                150.0 + luminosity * 90.0,
+            );
+            let (a, b) = world_line_points(index, camera, time);
+            draw_projected_world_line(
+                camera,
+                a,
+                b,
+                color,
+                (visibility * (170.0 + luminosity * 68.0)).min(238.0) as u8,
+                x_scale,
+            );
+        }
+        index += 1;
+    }
 }
 
-fn world_grid_point(lane: f32, y: f32, time: f32) -> (Vec3, f32) {
-    let angle = ((lane + 14.0) * 1_024.0 / 28.0) as i32;
-    let circular_x = sine(angle + 256);
-    let circular_y = sine(angle);
-    let edge = circular_x.abs().max(circular_y.abs()).max(0.001);
-    let square_x = circular_x / edge;
-    let square_y = circular_y / edge;
-    let reshaping = world_grid_shape(time, y);
-    let section_x = circular_x + (square_x - circular_x) * reshaping;
-    let section_y = circular_y + (square_y - circular_y) * reshaping;
-    let floor = GRID_FLOOR_Z;
-    let ceiling = grid_ceiling(y);
-    let middle = (floor + ceiling) * 0.5;
-    let half_height = (ceiling - floor) * 0.5;
-    let circular_width = half_height / 0.61;
-    let half_width = circular_width + (grid_half_width(y) - circular_width) * reshaping;
-    let x = section_x * half_width;
-    let mut z = middle - section_y * half_height;
-    let bottom = smoothstep((section_y - 0.96) / 0.04);
-    z += (grid_floor_height(x, y) - floor) * bottom;
-    (Vec3 { x, y, z }, bottom)
+#[allow(dead_code)]
+fn sphere_point(latitude: i32, longitude: i32, time: f32, altitude: f32) -> Vec3 {
+    let latitude_sine = sine(latitude);
+    let latitude_cosine = sine(latitude + 256);
+    let longitude_sine = sine(longitude);
+    let longitude_cosine = sine(longitude + 256);
+    let normal = Vec3 {
+        x: latitude_cosine * longitude_cosine,
+        y: latitude_cosine * longitude_sine,
+        z: latitude_sine,
+    };
+    let radius = PLANET_RADIUS + visible_planet_relief(normal, altitude, time);
+    vec_add(PLANET_CENTER, vec_scale(normal, radius))
 }
 
+fn planet_grid_color(point: Vec3) -> (u8, u8, u8) {
+    let normal = vec_normalize(vec_sub(point, PLANET_CENTER));
+    let map = planet_map_from_normal(normal);
+    let height = terrain_smooth(map.0, map.1);
+    if height <= WATER as f32 {
+        (36, 126, 235)
+    } else if height > 174.0 {
+        (238, 214, 178)
+    } else {
+        (72, 221, 139)
+    }
+}
+
+fn grid_sphere_vertex(
+    latitude: i32,
+    longitude: i32,
+    time: f32,
+    altitude: f32,
+    x_scale: f32,
+    flow: Option<FlowCamera>,
+    view: GridPlanetView,
+) -> Option<((f32, f32), Vec3)> {
+    let latitude_sine = sine(latitude);
+    let latitude_cosine = sine(latitude + 256);
+    let normal = Vec3 {
+        x: latitude_cosine * sine(longitude + 256),
+        y: latitude_cosine * sine(longitude),
+        z: latitude_sine,
+    };
+    let radius = PLANET_RADIUS + visible_planet_relief(normal, altitude, time);
+    let scale = radius / PLANET_RADIUS;
+    let point = vec_add(PLANET_CENTER, vec_scale(normal, radius));
+    let screen = if let Some(flow) = flow {
+        // Keep the sphere in the same canonical space as the lifted grid.
+        // This basis exactly matches the old screen orientation at orbit entry,
+        // then lets the shared camera carry the surface beneath us.
+        let local = Vec3 {
+            x: normal.x * FLOW_PLANET_RADIUS * scale,
+            y: -normal.z * FLOW_PLANET_RADIUS * scale,
+            z: normal.y * FLOW_PLANET_RADIUS * scale,
+        };
+        let projected = project_flow(&flow, vec_add(flow.planet, local))?;
+        (
+            160.0 + (projected.0 - 160.0) * x_scale,
+            projected.1,
+        )
+    } else {
+        (
+            view.x + normal.x * view.radius_x * scale,
+            view.y - normal.z * view.radius_y * scale,
+        )
+    };
+    Some((
+        screen,
+        point,
+    ))
+}
+
+fn render_wire_planet(
+    camera: &CameraPose,
+    time: f32,
+    x_scale: f32,
+    flow: Option<FlowCamera>,
+    view: GridPlanetView,
+) {
+    if view.visible <= 0.0 {
+        return;
+    }
+    let alpha = (view.visible * 225.0) as u8;
+    let step = if view.radius_y < 12.0 {
+        64
+    } else if view.radius_y < 38.0 {
+        32
+    } else {
+        16
+    };
+    let mut latitude = -192;
+    while latitude <= 192 {
+        let mut longitude = 0;
+        while longitude < 1_024 {
+            let Some((a, point)) = grid_sphere_vertex(
+                latitude, longitude, time, camera.altitude, x_scale, flow, view,
+            ) else {
+                longitude += step;
+                continue;
+            };
+            let Some((b, _)) = grid_sphere_vertex(
+                latitude, longitude + step, time, camera.altitude, x_scale, flow, view,
+            ) else {
+                longitude += step;
+                continue;
+            };
+            let color = planet_grid_color(point);
+            draw_line(
+                core::ptr::addr_of_mut!(FRAME).cast::<u8>(),
+                a.0 as i32, a.1 as i32, b.0 as i32, b.1 as i32,
+                color.0, color.1, color.2, alpha,
+            );
+            longitude += step;
+        }
+        latitude += step;
+    }
+    let mut longitude = 0;
+    while longitude < 1_024 {
+        let mut latitude = -256;
+        while latitude < 256 {
+            let Some((a, point)) = grid_sphere_vertex(
+                latitude, longitude, time, camera.altitude, x_scale, flow, view,
+            ) else {
+                latitude += step;
+                continue;
+            };
+            let Some((b, _)) = grid_sphere_vertex(
+                latitude + step, longitude, time, camera.altitude, x_scale, flow, view,
+            ) else {
+                latitude += step;
+                continue;
+            };
+            let color = planet_grid_color(point);
+            draw_line(
+                core::ptr::addr_of_mut!(FRAME).cast::<u8>(),
+                a.0 as i32, a.1 as i32, b.0 as i32, b.1 as i32,
+                color.0, color.1, color.2, alpha,
+            );
+            latitude += step;
+        }
+        longitude += step * 2;
+    }
+}
+
+#[allow(dead_code)]
 fn sphere_roots(origin: Vec3, direction: Vec3, radius: f32) -> Option<(f32, f32)> {
     let local = vec_sub(origin, PLANET_CENTER);
     let b = vec_dot(local, direction);
@@ -833,91 +1368,7 @@ fn sphere_roots(origin: Vec3, direction: Vec3, radius: f32) -> Option<(f32, f32)
     }
 }
 
-fn grid_point_in_front_of_planet(camera: &CameraPose, point: Vec3) -> bool {
-    let relative = vec_sub(point, camera.position);
-    let distance = vec_length(relative);
-    let direction = vec_scale(relative, 1.0 / distance.max(0.001));
-    let Some((planet_distance, _)) = sphere_roots(camera.position, direction, PLANET_RADIUS)
-    else {
-        return true;
-    };
-    distance <= planet_distance + 3.0
-}
-
-fn clip_world_segment_to_planet(
-    camera: &CameraPose,
-    a: Vec3,
-    b: Vec3,
-) -> Option<(Vec3, Vec3)> {
-    let a_front = grid_point_in_front_of_planet(camera, a);
-    let b_front = grid_point_in_front_of_planet(camera, b);
-    if a_front && b_front {
-        return Some((a, b));
-    }
-    if !a_front && !b_front {
-        return None;
-    }
-    let (mut front, mut behind) = if a_front { (a, b) } else { (b, a) };
-    let mut step = 0usize;
-    while step < 10 {
-        let middle = vec_scale(vec_add(front, behind), 0.5);
-        if grid_point_in_front_of_planet(camera, middle) {
-            front = middle;
-        } else {
-            behind = middle;
-        }
-        step += 1;
-    }
-    if a_front {
-        Some((a, front))
-    } else {
-        Some((front, b))
-    }
-}
-
-fn draw_foreground_grid_segment(
-    camera: &CameraPose,
-    a: Vec3,
-    b: Vec3,
-    color: (u8, u8, u8),
-    light: f32,
-    x_scale: f32,
-) {
-    let Some((visible_a, visible_b)) = clip_world_segment_to_planet(camera, a, b) else {
-        return;
-    };
-    let Some(screen_a) = project_world(camera, visible_a, x_scale) else {
-        return;
-    };
-    let Some(screen_b) = project_world(camera, visible_b, x_scale) else {
-        return;
-    };
-    if (screen_a.0 < -8.0 && screen_b.0 < -8.0)
-        || (screen_a.0 > WIDTH as f32 + 8.0 && screen_b.0 > WIDTH as f32 + 8.0)
-        || (screen_a.1 < -8.0 && screen_b.1 < -8.0)
-        || (screen_a.1 > HEIGHT as f32 + 8.0 && screen_b.1 > HEIGHT as f32 + 8.0)
-    {
-        return;
-    }
-    let distance = ((screen_a.2 + screen_b.2) * 0.5 / 17_000.0).clamp(0.0, 1.0);
-    let fog = (1.0 - distance * distance).clamp(0.26, 1.0);
-    let brightness = light * fog;
-    let lit = (
-        (color.0 as f32 * brightness).min(255.0) as u8,
-        (color.1 as f32 * brightness).min(255.0) as u8,
-        (color.2 as f32 * brightness).min(255.0) as u8,
-    );
-    let alpha = ((44.0 + fog * 174.0) * light.clamp(0.0, 1.0)) as u8;
-    draw_streak_line(
-        core::ptr::addr_of_mut!(FRAME).cast::<u8>(),
-        (screen_a.0, screen_a.1),
-        (screen_b.0, screen_b.1),
-        lit,
-        alpha,
-        (alpha as f32 * 0.28) as u8,
-    );
-}
-
+#[allow(dead_code)]
 fn surface_color(
     _point: Vec3,
     normal: Vec3,
@@ -1057,10 +1508,17 @@ fn surface_color(
     )
 }
 
-fn render_world_surface(camera: &CameraPose, time: f32, x_scale: f32) -> f32 {
+#[allow(dead_code)]
+fn render_world_surface(
+    camera: &CameraPose,
+    time: f32,
+    x_scale: f32,
+) -> f32 {
     let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
     let shell_radius = PLANET_RADIUS + 116.0;
-    let distance_visibility = smoothstep((22_000.0 - camera.altitude) / 4_000.0);
+    let center_distance = vec_length(vec_sub(PLANET_CENTER, camera.position));
+    let projected_radius = 154.0 * PLANET_RADIUS / center_distance.max(1.0);
+    let distance_visibility = smoothstep((projected_radius - 2.5) / 3.5);
     if distance_visibility <= 0.0 {
         return 0.0;
     }
@@ -1239,65 +1697,6 @@ fn draw_world_sun(camera: &CameraPose, amount: f32, x_scale: f32) {
     draw_sun(x, y, amount);
 }
 
-fn render_foreground_well(camera: &CameraPose, time: f32, x_scale: f32) {
-    let atmosphere_transmission = 1.0
-        - smoothstep((260.0 - camera.altitude) / 190.0) * 0.94;
-    let lane_step = 28.0 / (GRID_LANES - 1) as f32;
-    let start = PLANET_CENTER.y - 2_700.0;
-    let end = PLANET_CENTER.y + PLANET_RADIUS;
-    let mut lane_index = 0usize;
-    while lane_index < GRID_LANES {
-        let lane = -14.0 + lane_index as f32 * lane_step;
-        let (_, bottom) = world_grid_point(lane, PLANET_CENTER.y, time);
-        if bottom > 0.5 {
-            let c = accent_color(mesh_accent(lane));
-            let color = (c.0 as u8, c.1 as u8, c.2 as u8);
-            let mut y = start;
-            while y < end {
-                let next = (y + 260.0).min(end);
-                let a = world_grid_point(lane, y, time).0;
-                let b = world_grid_point(lane, next, time).0;
-                let light = 0.62
-                    + (sine((y * 0.08 - time * 48.0) as i32) * 0.5 + 0.5) * 0.38;
-                draw_foreground_grid_segment(
-                    camera,
-                    a,
-                    b,
-                    color,
-                    light * atmosphere_transmission,
-                    x_scale,
-                );
-                y = next;
-            }
-        }
-        lane_index += 1;
-    }
-
-    let mut y = start;
-    while y <= end {
-        let mut lane_index = 0usize;
-        while lane_index + 1 < GRID_LANES {
-            let lane_a = -14.0 + lane_index as f32 * lane_step;
-            let lane_b = lane_a + lane_step;
-            let (a, bottom_a) = world_grid_point(lane_a, y, time);
-            let (b, bottom_b) = world_grid_point(lane_b, y, time);
-            if bottom_a.max(bottom_b) > 0.5 {
-                let c = accent_color(mesh_accent((lane_a + lane_b) * 0.5));
-                draw_foreground_grid_segment(
-                    camera,
-                    a,
-                    b,
-                    (c.0 as u8, c.1 as u8, c.2 as u8),
-                    0.78 * atmosphere_transmission,
-                    x_scale,
-                );
-            }
-            lane_index += 1;
-        }
-        y += 260.0;
-    }
-}
-
 fn fill_atmospheric_sky(camera: &CameraPose) {
     let amount = smoothstep((260.0 - camera.altitude) / 190.0);
     if amount <= 0.0 {
@@ -1320,14 +1719,18 @@ fn fill_atmospheric_sky(camera: &CameraPose) {
     }
 }
 
-fn render_world_journey(elapsed: f32, x_scale: f32) {
-    let camera = journey_camera(elapsed);
-    fill_atmospheric_sky(&camera);
-    draw_world_sun(&camera, 1.0, x_scale);
-    let entry_heat = render_world_surface(&camera, elapsed, x_scale);
-    if camera.altitude < 22_000.0 {
-        render_foreground_well(&camera, elapsed, x_scale);
-    }
+fn render_world_journey(
+    elapsed: f32,
+    x_scale: f32,
+    camera: &CameraPose,
+    flow: Option<FlowCamera>,
+    planet: GridPlanetView,
+) {
+    fill_atmospheric_sky(camera);
+    draw_world_sun(camera, 1.0, x_scale);
+    render_wire_planet(camera, elapsed, x_scale, flow, planet);
+    let entry_heat = smoothstep((175.0 - camera.altitude) / 95.0)
+        * smoothstep((camera.altitude - 14.0) / 32.0);
     draw_entry_sheath(elapsed, entry_heat);
 }
 
@@ -1533,11 +1936,11 @@ fn outward_row(time: f32, birth: f32) -> f32 {
     travel_row(time) - travel_row(birth)
 }
 
-fn travel_row(time: f32) -> f32 {
+fn approach_travel_row(time: f32) -> f32 {
     if time <= CLEAN_BIRTH {
         return time * RING_SPEED;
     }
-    let duration = PLANET_REVEAL - CLEAN_BIRTH;
+    let duration = SCENE_3 - CLEAN_BIRTH;
     let reduction = 1.0 - APPROACH_SPEED;
     let elapsed = time - CLEAN_BIRTH;
     let before = CLEAN_BIRTH * RING_SPEED;
@@ -1555,17 +1958,21 @@ fn travel_row(time: f32) -> f32 {
     }
 }
 
+fn travel_row(time: f32) -> f32 {
+    approach_travel_row(time)
+}
+
 fn birth_shape(birth_position: f32) -> f32 {
     smoothstep(
-        (birth_position - travel_row(SCENE_2))
-            / (travel_row(SCENE_3) - travel_row(SCENE_2)),
+        (birth_position - approach_travel_row(SCENE_2))
+            / (approach_travel_row(SCENE_3) - approach_travel_row(SCENE_2)),
     )
 }
 
 fn birth_neon(birth_position: f32) -> f32 {
     smoothstep(
-        (birth_position - travel_row(SCENE_2))
-            / (travel_row(GRID_COLOR_FULL) - travel_row(SCENE_2)),
+        (birth_position - approach_travel_row(SCENE_2))
+            / (approach_travel_row(GRID_COLOR_FULL) - approach_travel_row(SCENE_2)),
     )
 }
 
@@ -1791,8 +2198,26 @@ fn draw_bloom_line(
     }
 }
 
-fn render_continuous_grid(time: f32) {
-    render_continuous_grid_warped(time, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+fn render_continuous_grid(
+    time: f32,
+    flow: Option<FlowCamera>,
+    planet: GridPlanetView,
+) {
+    let grid_planet = if let Some(camera) = flow {
+        grid_planet_view(camera.geometry_time, 1.0)
+    } else {
+        planet
+    };
+    render_continuous_grid_warped(
+        time,
+        0.0,
+        grid_planet.visible,
+        grid_planet.x,
+        grid_planet.well_y,
+        grid_planet.well_radius,
+        flow,
+        1.0,
+    );
 }
 
 fn render_continuous_grid_warped(
@@ -1802,12 +2227,18 @@ fn render_continuous_grid_warped(
     well_x: f32,
     well_y: f32,
     well_radius: f32,
-    view_turn: f32,
+    flow: Option<FlowCamera>,
     grid_visibility: f32,
 ) {
     fill_star_space(time);
     let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
     let clean_birth = CLEAN_BIRTH;
+    let geometry_time = if let Some(camera) = flow {
+        camera.geometry_time
+    } else {
+        time
+    };
+    let (fog_start, fog_end) = grid_fog_range(time);
 
     let mut index = 0usize;
     while index < STAR_LINES {
@@ -1844,7 +2275,14 @@ fn render_continuous_grid_warped(
         index += 1;
     }
 
-    draw_clean_grid_field(time, clean_birth);
+    if flow.is_none() {
+        draw_clean_grid_field(time, clean_birth);
+    } else {
+        clear_clean_background();
+    }
+    if grid_visibility <= 0.0 {
+        return;
+    }
     draw_ordered_radials(
         time,
         clean_birth,
@@ -1852,7 +2290,7 @@ fn render_continuous_grid_warped(
         well_x,
         well_y,
         well_radius,
-        view_turn,
+        flow,
         grid_visibility,
     );
 
@@ -1862,11 +2300,11 @@ fn render_continuous_grid_warped(
         if time >= birth {
             let (lane_a, _, lane_b, _) = line_coordinates(index);
             let ring = (index - SPOKE_LINES) / (GRID_LANES - 1);
-            let (depth, current_birth) = ring_state(ring, time);
+            let (depth, current_birth) = ring_state(ring, geometry_time);
             let ring_shape = birth_shape(current_birth);
             let visible_depth = depth;
             let threshold_ring = current_birth < travel_row(clean_birth);
-            if visible_depth <= GRID_FOG_START {
+            if visible_depth <= fog_start {
                 index += 1;
                 continue;
             }
@@ -1874,33 +2312,31 @@ fn render_continuous_grid_warped(
                 1.0
             } else {
                 smoothstep(
-                    (visible_depth - GRID_FOG_START) / (GRID_FOG_END - GRID_FOG_START),
+                    (visible_depth - fog_start) / (fog_end - fog_start),
                 )
             };
-            let a = rotate_grid_point(
-                warp_grid_point(
-                    grid_depth_point(lane_a, depth, ring_shape),
-                    gravity,
-                    well_x,
-                    well_y,
-                    well_radius,
-                ),
-                view_turn,
+            let point_a = grid_depth_point(lane_a, depth, ring_shape);
+            let point_b = grid_depth_point(lane_b, depth, ring_shape);
+            let screen_a = warp_grid_point(
+                point_a,
+                gravity,
                 well_x,
                 well_y,
+                well_radius,
             );
-            let b = rotate_grid_point(
-                warp_grid_point(
-                    grid_depth_point(lane_b, depth, ring_shape),
-                    gravity,
-                    well_x,
-                    well_y,
-                    well_radius,
-                ),
-                view_turn,
+            let screen_b = warp_grid_point(
+                point_b,
+                gravity,
                 well_x,
                 well_y,
+                well_radius,
             );
+            let Some((a, b)) = project_flow_grid_segment(
+                screen_a, depth, screen_b, depth, flow,
+            ) else {
+                index += 1;
+                continue;
+            };
             let middle_x = (a.0 + b.0) * 0.5 - 160.0;
             let middle_y = (a.1 + b.1) * 0.5 - 100.0;
             let distance = (fast_sqrt(middle_x * middle_x + middle_y * middle_y) / 175.0)
@@ -1942,7 +2378,7 @@ fn draw_ordered_radials(
     well_x: f32,
     well_y: f32,
     well_radius: f32,
-    view_turn: f32,
+    flow: Option<FlowCamera>,
     grid_visibility: f32,
 ) {
     let introduction = STAR_ORGANIZE + 1.5;
@@ -1951,15 +2387,21 @@ fn draw_ordered_radials(
     }
     let introduction_position = travel_row(introduction);
     let clean_position = travel_row(clean_birth);
+    let (fog_start, fog_end) = grid_fog_range(time);
     let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
+    let geometry_time = if let Some(camera) = flow {
+        camera.geometry_time
+    } else {
+        time
+    };
     let mut lane_index = 0usize;
     while lane_index < GRID_LANES {
         let lane = -14.0 + lane_index as f32 * (28.0 / (GRID_LANES - 1) as f32);
         let mut ring = 0usize;
         while ring < GRID_RINGS {
             let next_ring = (ring + 1) % GRID_RINGS;
-            let (mut outer, outer_birth) = regular_spoke_state(ring, time);
-            let (mut inner, inner_birth) = regular_spoke_state(next_ring, time);
+            let (mut outer, outer_birth) = regular_spoke_state(ring, geometry_time);
+            let (mut inner, inner_birth) = regular_spoke_state(next_ring, geometry_time);
             if outer_birth > inner_birth {
                 ring += 1;
                 continue;
@@ -1973,51 +2415,49 @@ fn draw_ordered_radials(
                 continue;
             }
             let visible_depth = outer.max(inner);
-            if visible_depth <= GRID_FOG_START {
+            if visible_depth <= fog_start {
                 ring += 1;
                 continue;
             }
             let mut outer_shape = birth_shape(outer_birth);
             let mut inner_shape = birth_shape(inner_birth);
-            if outer > inner && inner < GRID_FOG_START {
+            if outer > inner && inner < fog_start {
                 let span = (outer - inner).max(0.001);
-                let clip = ((GRID_FOG_START - inner) / span).clamp(0.0, 1.0);
+                let clip = ((fog_start - inner) / span).clamp(0.0, 1.0);
                 inner += (outer - inner) * clip;
                 inner_shape += (outer_shape - inner_shape) * clip;
-            } else if inner > outer && outer < GRID_FOG_START {
+            } else if inner > outer && outer < fog_start {
                 let span = (inner - outer).max(0.001);
-                let clip = ((GRID_FOG_START - outer) / span).clamp(0.0, 1.0);
+                let clip = ((fog_start - outer) / span).clamp(0.0, 1.0);
                 outer += (inner - outer) * clip;
                 outer_shape += (inner_shape - outer_shape) * clip;
             }
             let visibility = smoothstep(
-                (visible_depth - GRID_FOG_START) / (GRID_FOG_END - GRID_FOG_START),
+                (visible_depth - fog_start) / (fog_end - fog_start),
             ) * prominence;
-            let a = rotate_grid_point(
-                warp_grid_point(
-                    grid_depth_point(lane, outer, outer_shape),
-                    gravity,
-                    well_x,
-                    well_y,
-                    well_radius,
-                ),
-                view_turn,
+            let point_a = grid_depth_point(lane, outer, outer_shape);
+            let point_b = grid_depth_point(lane, inner, inner_shape);
+            let screen_a = warp_grid_point(
+                point_a,
+                gravity,
                 well_x,
                 well_y,
+                well_radius,
             );
-            let b = rotate_grid_point(
-                warp_grid_point(
-                    grid_depth_point(lane, inner, inner_shape),
-                    gravity,
-                    well_x,
-                    well_y,
-                    well_radius,
-                ),
-                view_turn,
+            let screen_b = warp_grid_point(
+                point_b,
+                gravity,
                 well_x,
                 well_y,
+                well_radius,
             );
             let index = lane_index * GRID_RINGS + ring;
+            let Some((a, b)) = project_flow_grid_segment(
+                screen_a, outer, screen_b, inner, flow,
+            ) else {
+                ring += 1;
+                continue;
+            };
             let middle_x = (a.0 + b.0) * 0.5 - 160.0;
             let middle_y = (a.1 + b.1) * 0.5 - 100.0;
             let distance = (fast_sqrt(middle_x * middle_x + middle_y * middle_y) / 175.0)
@@ -2088,6 +2528,15 @@ fn draw_clean_grid_field(time: f32, clean_birth: f32) {
     }
 }
 
+fn clear_clean_background() {
+    let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
+    let mut byte = 0usize;
+    while byte < FRAME_BYTES {
+        unsafe { frame.add(byte).write(0) };
+        byte += 1;
+    }
+}
+
 fn warp_grid_point(
     point: (f32, f32),
     strength: f32,
@@ -2101,32 +2550,12 @@ fn warp_grid_point(
     let dx = well_x - point.0;
     let dy = point.1 - well_y;
     let radius_squared = radius * radius;
-    let floor_weight = smoothstep((point.1 - 94.0) / 42.0);
+    let floor_weight = smoothstep((point.1 - well_y + 8.0) / 16.0);
     let influence = strength * floor_weight * radius_squared
         / (dx * dx + dy * dy * 1.6 + radius_squared);
     (
         point.0 + dx * influence * 0.36,
-        point.1 + influence * radius * 0.82,
-    )
-}
-
-fn rotate_grid_point(
-    point: (f32, f32),
-    turn: f32,
-    center_x: f32,
-    center_y: f32,
-) -> (f32, f32) {
-    if turn <= 0.0 {
-        return point;
-    }
-    let angle = (turn * 1_024.0) as i32;
-    let cosine = sine(angle + 256);
-    let rotation_sine = sine(angle);
-    let x = point.0 - center_x;
-    let y = (point.1 - center_y) / 0.61;
-    (
-        center_x + x * cosine - y * rotation_sine,
-        center_y + (x * rotation_sine + y * cosine) * 0.61,
+        point.1 + influence * radius * GRAVITY_WELL_DEPTH,
     )
 }
 
@@ -2231,6 +2660,7 @@ fn draw_sun(center_x: f32, center_y: f32, amount: f32) {
     }
 }
 
+#[allow(dead_code)]
 fn terrain_color_smooth(height: f32) -> (u8, u8, u8) {
     let ramp = |from: (f32, f32, f32), to: (f32, f32, f32), amount: f32| {
         (
@@ -2258,6 +2688,7 @@ fn terrain_color_smooth(height: f32) -> (u8, u8, u8) {
     )
 }
 
+#[allow(dead_code)]
 fn color_ramp(from: (i32, i32, i32), to: (i32, i32, i32), amount: i32, range: i32) -> (u8, u8, u8) {
     let blend = |a: i32, b: i32| (a + (b - a) * amount / range).clamp(0, 255) as u8;
     (blend(from.0, to.0), blend(from.1, to.1), blend(from.2, to.2))
@@ -2383,7 +2814,7 @@ fn planet_x_scale(window: WinSize) -> f32 {
     } else {
         (window.columns.max(1) as f32, window.rows.max(1) as f32 * 2.0)
     };
-    (physical_height * WIDTH as f32 / (physical_width * HEIGHT as f32)).clamp(0.35, 3.0)
+    physical_height * WIDTH as f32 / (physical_width * HEIGHT as f32)
 }
 
 fn handle_input(elapsed: &mut f32) -> bool {

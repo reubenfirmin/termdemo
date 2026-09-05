@@ -4,7 +4,12 @@ A tiny, dependency-free procedural mesh landscape demo rendered through the Kitt
 graphics protocol. The executable is freestanding Rust: `no_std`, `no_main`,
 no allocator, no libc, and no external crates.
 
-The demo is a continuous six-act sequence:
+The intended demo is a continuous six-act sequence. Acts 1 through 3 and the
+planet approach/orbit portion of act 4 are implemented. The orbit-to-valley
+journey is not yet accepted or connected to the same camera and geometry; its
+binding implementation plan is in [PLAN.md](PLAN.md).
+
+The sequence is:
 
 1. Eleven uninterrupted seconds of forward flight through a rectangular-frustum
    star field with stable stellar temperatures, depth bloom, rare attached
@@ -50,41 +55,32 @@ The demo is a continuous six-act sequence:
    maintaining forward parallax down the grid's center. From the clean-cone
    front to the planet reveal, accumulated grid travel eases smoothly down to
    a slow approach
-4. The same grid bending continuously into a broad gravity well on its bottom
-   face. The visible well arrives at the distance-fog boundary before its
-   textured, per-pixel ray-sphere planet is revealed at that established grid
-   anchor. One uninterrupted seventy-two-second approach and descending spiral
-   then carries the moving surface beneath the camera through five
-   same-direction revolutions. Its position and velocity remain continuous
-   across every timing boundary, total forward speed never reaches zero, and the boxed grid revolves above
-   it and remains visible through most of the descent. The sphere grows into
-   the lower horizon; the grid continues behind it into entry and disappears
-   only as the expanding surface physically occludes it. Terminal pixel geometry keeps the sphere
-   physically round at every window shape. Moving diffuse and
-   water-dependent specular light, clouds, ocean, continents,
-   and a narrow cyan/green/violet aurora resolve across its limb
-5. A single uninterrupted atmospheric passage: turbulent edge-bound entry plasma builds
-   on top of the still-visible moving globe. Its spherical terrain coordinates
-   continuously unwrap into the landing map after the globe covers the entire
-   viewport, retaining the same river, coast, relief, lighting, and motion on
-   both sides of the tangent projection. That shared height field then moves
-   from roughly 1,000-mile continent scale through 100-mile regional scale
-6. The same per-pixel terrain camera keeps descending and pitching from the
-   regional overhead view to a valley seen from above. Increasingly forward-looking rays
-   allow distant mountain ranges to rise across the geometric horizon before
-   their walls enclose the camera at roughly one-mile scale. Plasma remains a
-   translucent atmospheric overlay and converges to zero without replacing
-   the terrain beneath it; terrain fog and world-anchored clouds remain part of
-   the same continuously sampled view
+4. The same grid bends into a gravity well on its bottom face. A wireframe
+   sphere is introduced at that grid anchor at 27 seconds, and the shared
+   projective camera begins bending the approach into orbit at 28 seconds. The
+   grid section, well, and planet share translation and projection. The planet
+   remains physically round at every terminal aspect ratio. The path spirals
+   inward without reversing and reaches the fourth revolution at approximately
+   73.918 seconds. For the working physical model of a 27,000-mile-diameter
+   planet, that point is exactly 100 miles above the surface. A fifth holding
+   revolution currently continues at that altitude until 105 seconds.
+5. **Planned, not yet implemented on the accepted camera:** the fourth orbit
+   continues directly into atmospheric descent. Plasma and atmospheric
+   scattering accumulate over the already visible grid and globe according to
+   density and velocity. No renderer, camera, coordinate system, mask, cut, or
+   crossfade may replace the orbital view.
+6. **Planned, not yet implemented on the accepted geometry:** the same
+   spherical surface refines continuously from planet to continent, regional
+   landscape, mountain range, valley-from-above, and finally valley flight at
+   20 metres above the displaced terrain. Curvature becomes locally
+   imperceptible through scale alone; the planet never turns into a separate
+   plane.
 
-The final scene flies at 3.45 terrain-map units per second along a carved,
-periodic valley. Its continuous world-space tangent tracks the valley center
-while altitude and look angle settle smoothly from the orbital path. A single
-master world path supplies orbital phase, radial approach,
-grid orientation, surface time, atmospheric progress, and nonzero ground
-velocity from first sighting onward. Terrain-space lighting and refined height-field intersections keep
-the mountain shading stable as the surface moves. World-anchored crags,
-strata, and vegetation variation add motion cues to the valley walls while leaving the floor quieter.
+Legacy atmospheric and terrain routines remain in the source, but they use an
+older camera and scale and therefore are not part of the accepted continuous
+journey. They will be removed or migrated according to [PLAN.md](PLAN.md), not
+blended into the orbit renderer.
+
 Frames update Kitty's persistent root animation buffer so they do not create
 and delete screen placements.
 
@@ -92,7 +88,9 @@ The geometric sequence uses 73 angular lanes and 25 live depth bands. Its
 wireframe is rasterized from subpixel endpoints with antialiased hot cores,
 soft bloom, rotating directional light, specular highlights, and traveling
 depth glints. The earlier ship deceleration uses a front-loaded smooth curve,
-while distance-based recycling keeps the grid spacing uniform at every speed.
+while distance-based recycling keeps the grid spacing uniform before orbit
+capture. During orbit, the nearby grid section shares the planet's co-moving
+world frame so its floor, ceiling, and walls remain present around the camera.
 
 ## Requirements
 
@@ -123,7 +121,9 @@ upper-left `SSS.t` counter identifies transition timing to a tenth of a second.
 The program uses the alternate screen and restores the original terminal mode
 on normal exit.
 
-The uninterrupted sequence reaches the low valley flight after 137 seconds.
+The target sequence reaches low valley flight after 137 seconds. The currently
+accepted continuous implementation ends with the close-orbit hold; later
+legacy terrain output is not considered completion of that journey.
 
 When stdout is not a terminal, the executable renders and encodes one frame and
 then exits. This provides a headless smoke test:
