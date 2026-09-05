@@ -1,0 +1,13 @@
+# Phase 0 accepted motion invariants
+
+orbit_entry_seconds 28.000000
+orbit_four_seconds 51.959260
+orbit_four_center_radius_ratio 1.007407407
+orbit_direction increasing
+orbit_entry_position_residual_max_canonical 0.020000
+orbit_entry_visible_grid_error_max_pixels 0.500000
+planet_physical_roundness_error_max_pixels 1.000000
+
+# The nonzero entry-position tolerance records the current fast_sqrt numerical
+# residual. Phase 1 may reduce it, but must not increase projected error or
+# alter protected pre-planet frame hashes.

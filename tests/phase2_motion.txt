@@ -1,0 +1,28 @@
+# Phase 2 continuous orbit-to-valley trajectory invariants
+
+descent_start_seconds 51.959260
+descent_end_seconds 106.000000
+low_flight_endpoint_seconds 137.000000
+altitude_checkpoint_51.959260_miles 100
+altitude_checkpoint_65_metres 100000
+altitude_checkpoint_78_metres 30000
+altitude_checkpoint_86_metres 8000
+altitude_checkpoint_94_metres 1500
+altitude_checkpoint_100_metres 200
+altitude_checkpoint_106_metres 20
+boundary_velocity_relative_error_max 0.02
+boundary_acceleration_relative_error_max 0.15
+boundary_attitude_dot_min 0.999
+endpoint_position_target_dot_min 0.999999
+endpoint_ground_speed nonzero_before_and_after
+angular_direction increasing
+trajectory_clock demo_time_1_to_1
+capture_speed never_exceeds_inherited_approach_and_follows_braking_envelope
+valley_overhead_seconds 94
+
+# Altitude is a monotone C2 piecewise-quintic spline through these physical
+# controls. Orbital phase uses C2 segments from the inherited fourth-orbit
+# phase/rate/acceleration through almost four additional revolutions before
+# the overhead pass, then completes the remaining forward motion in the valley.
+# Its final rate is nonzero. Camera forward comes from the path derivative;
+# camera down comes from the projected planet-relative radial direction.

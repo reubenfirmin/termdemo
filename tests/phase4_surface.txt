@@ -1,0 +1,15 @@
+# Phase 4 unified spherical-surface invariants
+
+surface_model canonical_f64_displaced_sphere
+terrain_coordinates shared_surface_normal
+planet_and_wire_surface identical_world_points
+depth_buffer_dimensions 320x200
+rear_grid_fragments rejected
+foreground_grid_fragments retained
+terminal_aspect_correction projected_space_only
+final_altitude_agl_metres 20
+
+# `make audit-phase4` reruns all earlier gates, checks deterministic terrain
+# placement on the canonical sphere, exercises nearer/farther writes through
+# the shared depth buffer, and verifies the final camera height against the
+# displaced surface rather than the nominal sphere.

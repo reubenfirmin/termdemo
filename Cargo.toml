@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+phase0-audit = []
+
 [profile.release]
 opt-level = "z"
 lto = "fat"
@@ -15,4 +18,3 @@ overflow-checks = false
 
 [profile.dev]
 panic = "abort"
-

@@ -1,0 +1,17 @@
+# Phase 3 unified post-entry camera invariants
+
+unified_camera_start_seconds 28
+legacy_camera_runtime_scope before_28_seconds_only
+former_legacy_boundary_seconds 105
+entry_sun_projection_delta_max_pixels 0.5
+former_boundary_sun_delta_max_pixels 1.0
+former_boundary_attitude_dot_min 0.999
+seek_reproduction exact_position
+sun_direction fixed_world_normal
+atmosphere_input unified_altitude
+entry_heat_inputs unified_altitude_and_speed
+planet_post_entry_coordinate_system canonical_f64
+
+# `make audit-phase3` reruns every prior gate, verifies the sun calibration at
+# unified-camera entry, checks camera/sun/atmospheric continuity across the old
+# 105-second handoff time, and seeks repeatedly to all physical checkpoints.

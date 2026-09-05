@@ -1,0 +1,18 @@
+# Phase 5 continuous-refinement invariants
+
+height_parent_cells 64
+height_range_cells 16
+height_mountain_cells 4
+height_valley_cells 1
+lod_driver projected_surface_footprint
+lod_order continent_range_mountain_valley
+full_lod reconstructs_source_height
+landmark_coordinate permanent_surface_normal
+maximum_geomorph_motion_per_frame_pixels 1
+valley_overhead_seconds 94
+valley_visible_before_entry true
+
+# `make audit-phase5` reruns every earlier gate. It checks ordered monotonic LOD
+# weights, exact telescoping reconstruction, fixed spherical landmark
+# directions, subpixel frame-to-frame morphing, and visibility of the actual
+# destination valley at the overhead checkpoint.
