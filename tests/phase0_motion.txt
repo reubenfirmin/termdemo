@@ -1,13 +1,30 @@
 # Phase 0 accepted motion invariants
 
 orbit_entry_seconds 28.000000
-orbit_four_seconds 51.959260
-orbit_four_center_radius_ratio 1.007407407
+accepted_orbit_one_seconds 34.978350
+accepted_orbit_one_phase_turns 1
+accepted_orbit_one_motion_samples 513
 orbit_direction increasing
 orbit_entry_position_residual_max_canonical 0.020000
 orbit_entry_visible_grid_error_max_pixels 0.500000
 planet_physical_roundness_error_max_pixels 1.000000
+protected_frame_checkpoints 51
+protected_frame_end_seconds 34.978350
+dense_boundary_start_seconds 27.000000
+dense_boundary_end_seconds 29.000000
+dense_boundary_step_seconds 0.010000
+camera_pipeline all_times_flow_camera
+approach_camera_motion 0_to_28_seconds
+approach_geometry fixed_world_grid_and_planet
+projection_pipeline shared_flow_projection
+depth_pipeline always_initialized
+controls right_arrow,space,escape
+right_arrow_seek_delta_seconds 2
+space_seek_delta_seconds 5
+numbered_seek_targets exact
+arrow_escape_sequence_fragment_delay_ms 5,5
+arrow_escape_sequence_timeout_ms 20
 
 # The nonzero entry-position tolerance records the current fast_sqrt numerical
 # residual. Phase 1 may reduce it, but must not increase projected error or
-# alter protected pre-planet frame hashes.
+# alter protected frames through the accepted first orbit.

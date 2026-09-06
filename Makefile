@@ -1,4 +1,4 @@
-.PHONY: build check small run size audit-build audit-phase0 audit-phase1 audit-phase2 audit-phase3 audit-phase4 audit-phase5 audit-phase0-baseline clean
+.PHONY: build check small run size audit-build audit-phase0 audit-phase1 audit-phase2 audit-phase3 audit-phase4 audit-phase5 audit-phase6 audit-phase7 audit-phase0-baseline clean
 
 BIN := target/x86_64-unknown-linux-gnu/release/termdemo
 SMALL := target/x86_64-unknown-linux-gnu/release/termdemo-small
@@ -42,6 +42,12 @@ audit-phase4: audit-phase3
 
 audit-phase5: audit-phase4
 	printf '&' | $(AUDIT_BIN)
+
+audit-phase6: audit-phase5
+	printf '*' | $(AUDIT_BIN)
+
+audit-phase7: audit-phase6
+	printf '+' | $(AUDIT_BIN)
 
 audit-phase0-baseline: build
 	python3 scripts/phase0_audit.py $(BIN) $(BIN) tests/phase0_frames.sha256 --record

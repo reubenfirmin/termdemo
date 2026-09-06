@@ -1,0 +1,25 @@
+# Phase 7 single-world hardening invariants
+
+camera_type FlowCamera
+projection project_flow_depth
+surface_renderer render_flow_surface
+subpixel_surface_lod footprint_weighted_shared_perspective_surface_sample
+surface_line_accents absent
+independent_wire_depth_ownership absent
+depth_buffer shared_grid_surface
+atmosphere_shell shared_planet_center
+legacy_camera absent
+legacy_planar_surface absent
+legacy_ray_surface absent
+legacy_scene_constants absent
+dead_code_suppression absent
+seek_state deterministic_camera_and_complete_frame
+frame_seek_times_seconds 27.99,28,51.95926,65,94,137
+controls inherited_phase0_gate
+performance all_required_timeline_checkpoints
+performance_clock process_cpu_excludes_scheduler_contention
+performance_times_seconds 0,4,7,11,14.75,21,27,28,51.95926,65,78,86,94,100,106,137
+
+# `make audit-phase7` reruns every phase gate and source-contract check. It
+# verifies complete footprint-weighted surface coverage and deterministic
+# camera state at representative points across the entire timeline.

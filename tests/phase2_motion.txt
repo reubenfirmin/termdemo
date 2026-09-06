@@ -1,28 +1,44 @@
-# Phase 2 continuous orbit-to-valley trajectory invariants
+# Phase 2 single-state orbit-to-valley trajectory invariants
 
-descent_start_seconds 51.959260
-descent_end_seconds 106.000000
-low_flight_endpoint_seconds 137.000000
-altitude_checkpoint_51.959260_miles 100
-altitude_checkpoint_65_metres 100000
-altitude_checkpoint_78_metres 30000
-altitude_checkpoint_86_metres 8000
-altitude_checkpoint_94_metres 1500
-altitude_checkpoint_100_metres 200
-altitude_checkpoint_106_metres 20
-boundary_velocity_relative_error_max 0.02
-boundary_acceleration_relative_error_max 0.15
-boundary_attitude_dot_min 0.999
-endpoint_position_target_dot_min 0.999999
-endpoint_ground_speed nonzero_before_and_after
-angular_direction increasing
-trajectory_clock demo_time_1_to_1
-capture_speed never_exceeds_inherited_approach_and_follows_braking_envelope
-valley_overhead_seconds 94
+trajectory_evaluator trajectory_state
+trajectory_domain_seconds 0..137
+trajectory_integration_hz 120
+trajectory_state clearance,clearance_rate,unwrapped_phase,phase_rate,meridian,meridian_rate
+trajectory_outputs position,velocity,acceleration,forward,down,roll
+state_initialization_count 1
+post_entry_position_reset_count 0
+boundary_state_reconstruction_count 0
+alternate_position_formula_count 0
+deterministic_seek bit_identical
 
-# Altitude is a monotone C2 piecewise-quintic spline through these physical
-# controls. Orbital phase uses C2 segments from the inherited fourth-orbit
-# phase/rate/acceleration through almost four additional revolutions before
-# the overhead pass, then completes the remaining forward motion in the valley.
-# Its final rate is nonzero. Camera forward comes from the path derivative;
-# camera down comes from the projected planet-relative radial direction.
+approach_visible_seconds 27..28
+orbit_one_crossing_seconds 35
+orbit_two_crossing_seconds 42
+orbit_three_crossing_seconds 60
+orbit_crossing_phase_tolerance_units 2
+orbit_three_displaced_agl_feet 30000
+orbit_three_speed_ratio_to_orbit_one_max 0.25
+airplane_pass_seconds 60..90
+airplane_pass_displaced_agl_feet 30000
+airplane_pass_phase_advance_units_max 128
+valley_overhead_seconds 98
+valley_overhead_displaced_agl_feet 1500
+valley_corridor_seconds 108
+valley_corridor_displaced_agl_feet 200
+low_flight_altitude_seconds 116
+low_flight_altitude_metres 20
+low_flight_endpoint_seconds 137
+endpoint_unwrapped_phase_units 3200
+
+orbital_direction increasing
+endpoint_ground_speed nonzero
+position_derivative source_state_velocity
+velocity_derivative source_state_acceleration
+surface_clearance canonical_displaced_surface
+camera_forward path_velocity_plus_continuous_look_offset
+camera_down planet_relative
+
+# Named times sample the evolving state and tune smooth control envelopes.
+# None initializes another curve, changes coordinates, or supplies a stored
+# boundary derivative. The old wire-retirement and braking-boundary checks
+# were removed because those concepts are not part of the trajectory model.

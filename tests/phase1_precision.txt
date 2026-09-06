@@ -1,12 +1,13 @@
 # Phase 1 physical-scale and precision invariants
 
 planet_radius_miles 13500
-close_orbit_altitude_miles 100
+airplane_pass_altitude_feet 30000
 final_altitude_metres 20
 canonical_planet_radius 0.115
 physical_canonical_round_trip_relative_max 2e-15
 far_origin_20m_recovery_relative_max 0.002
 accepted_projection_delta_max_pixels 0.5
+accepted_projection_end_seconds 34.97835
 
 # `make audit-phase1` validates these limits after placing the canonical planet
 # at a world origin whose coordinates have magnitude up to 3,000,000. Camera

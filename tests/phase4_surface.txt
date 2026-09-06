@@ -1,15 +1,33 @@
-# Phase 4 unified spherical-surface invariants
+# Phase 4 single displaced-surface invariants
 
+surface_center canonical_planet_origin
 surface_model canonical_f64_displaced_sphere
+surface_max_relief_miles 12
 terrain_coordinates shared_surface_normal
-planet_and_wire_surface identical_world_points
-depth_buffer_dimensions 320x200
-rear_grid_fragments rejected
-foreground_grid_fragments retained
-terminal_aspect_correction projected_space_only
+agl_source canonical_displaced_surface
 final_altitude_agl_metres 20
+surface_intersection_source sample_surface_vertex
+subpixel_coverage same_surface_sampler
+polygon_coverage same_surface_sampler
+surface_line_accents absent
+independent_wire_globe absent
+screen_derived_planet_proxy absent
+projected_bounds canonical_max_displaced_radius
+surface_pipeline fixed_capacity_stable_screen_lattice
+surface_row_capacity minimum_width_over_cell_plus_2
+surface_cell_size_pixels 4
+surface_topology_driver constant_not_time_altitude_or_radius
+near_plane canonical_camera_clearance
+depth_convention single_camera_forward_depth
+terminal_aspect_scales 0.5,1,2
+terminal_aspect_vertical_transform unchanged
+terminal_aspect_horizontal_transform shared
+lod_transfer continuous_complete_partition
+audit_mode numerical_only_no_frame_generation
 
-# `make audit-phase4` reruns all earlier gates, checks deterministic terrain
-# placement on the canonical sphere, exercises nearer/farther writes through
-# the shared depth buffer, and verifies the final camera height against the
-# displaced surface rather than the nominal sphere.
+# The direct '%' audit checks canonical surface placement, deterministic
+# intersection, displaced-surface AGL, near-plane safety, conservative
+# displaced-sphere bounds, aspect behavior, fixed mesh capacity, and continuous
+# ownership transfer between the two raster coverage strategies. Source checks
+# separately reject the deleted proxy ellipse, latitude/longitude globe,
+# surface mesh-edge accents, and independent wire/depth path.

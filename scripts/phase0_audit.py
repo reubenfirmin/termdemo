@@ -18,15 +18,56 @@ import time
 FRAME_BYTES = 320 * 200 * 3
 FRAME_TIMES = (
     "0.5",
+    "1.0",
+    "2.0",
+    "3.0",
     "4.0",
+    "5.0",
+    "6.0",
     "7.0",
+    "8.0",
+    "9.0",
+    "10.0",
     "11.0",
+    "12.0",
+    "13.0",
+    "14.0",
+    "14.74",
     "14.75",
+    "14.80",
+    "16.0",
+    "18.0",
+    "20.0",
     "20.063",
+    "20.10",
     "21.0",
+    "22.0",
+    "23.0",
     "24.0",
+    "25.0",
+    "26.0",
     "26.9",
     "27.0",
+    "27.10",
+    "27.25",
+    "27.50",
+    "27.75",
+    "27.90",
+    "27.99",
+    "28.0",
+    "28.25",
+    "28.5",
+    "28.75",
+    "29.0",
+    "30.0",
+    "31.0",
+    "32.0",
+    "33.0",
+    "34.0",
+    "34.5",
+    "34.9",
+    "34.97",
+    "34.97835",
 )
 
 
@@ -121,6 +162,77 @@ def check_motion(audit_binary: Path) -> None:
     print(output)
 
 
+def check_pipeline_source(baseline_path: Path) -> None:
+    source_path = baseline_path.parent.parent / "src" / "main.rs"
+    source = source_path.read_text()
+    forbidden = (
+        "Option<FlowCamera>",
+        "flow.is_none()",
+        "flow.is_some()",
+        "render_intro_surface",
+        "journey_camera",
+        "journey_position",
+        "clear_clean_background",
+        "render_ray_surface_lod",
+        "fill_atmospheric_sky",
+        "render_distant_surface_lod",
+        "render_world_surface",
+        "CameraPose",
+        "const PLANET_CENTER: Vec3",
+        "#[allow(dead_code)]",
+        "fn sphere_roots",
+        "SCENE_",
+        "if flow_camera_is_straight",
+        "planet_x_scale",
+        "warp_grid_point",
+        "constrain_planet_framing",
+        "fn lift_grid_point",
+        "fn flow_depth",
+    )
+    present = [token for token in forbidden if token in source]
+    if present:
+        fail("split camera/render pipeline remains: " + ", ".join(present))
+    required = (
+        "fn flow_camera(time: f32) -> FlowCamera",
+        "clear_depth_buffer();",
+        "fn flow_grid_world_point(",
+        "fn flow_star_world_point(",
+        "fn flow_field_transport(",
+        "project_flow_star_segment(",
+        "project_flow_grid_segment(",
+        "fn projection_x_scale(",
+        "render_continuous_grid(elapsed, &flow, x_scale)",
+        "render_flow_surface(",
+        "render_polygon_surface_lod(",
+        "apply_atmospheric_shell(",
+    )
+    missing = [token for token in required if token not in source]
+    if missing:
+        fail("unified pipeline marker missing: " + ", ".join(missing))
+    flyby_start = source.index("fn flyby_segment(")
+    canonical_marker = '\n#[cfg(feature = "phase0-audit")]\nfn canonical_flyby_segment'
+    flyby_end = source.index(canonical_marker, flyby_start)
+    flyby_digest = hashlib.sha256(source[flyby_start:flyby_end].encode()).hexdigest()
+    canonical_flyby_digest = "230a7e8db698a84157f95828cc314b84f38c4a342bfb637605288abc7a8666e5"
+    if flyby_digest != canonical_flyby_digest:
+        fail(
+            "signed-off flyby law changed: "
+            f"expected {canonical_flyby_digest}, got {flyby_digest}"
+        )
+    reference_start = source.index("fn canonical_flyby_segment(")
+    reference_end = source.index("\nconst fn formation_gap", reference_start)
+    reference_digest = hashlib.sha256(
+        source[reference_start:reference_end].encode()
+    ).hexdigest()
+    canonical_reference_digest = "f4dee75ac62a1c1314117cae7baafcc28547932f9ce76c73c2d3ca134e7feb4a"
+    if reference_digest != canonical_reference_digest:
+        fail(
+            "signed-off flyby oracle changed: "
+            f"expected {canonical_reference_digest}, got {reference_digest}"
+        )
+    print("phase7 source ok: one FlowCamera, branch-free aspect-correct grid projection, polygon surface, shared shell/depth")
+
+
 def check_controls(binary: Path) -> None:
     master, slave = pty.openpty()
     before = termios.tcgetattr(slave)
@@ -161,7 +273,14 @@ def check_controls(binary: Path) -> None:
         if not entered_screen.wait(2.0):
             fail("interactive process did not enter the alternate screen")
 
-        os.write(master, b"\x1b[C")
+        # Deliberately fragment the escape sequence. Real terminals may split
+        # these bytes across reads; Right Arrow must not be mistaken for a
+        # standalone Escape when that happens.
+        os.write(master, b"\x1b")
+        time.sleep(0.005)
+        os.write(master, b"[")
+        time.sleep(0.005)
+        os.write(master, b"C")
         time.sleep(0.15)
         if process.poll() is not None:
             fail("Right Arrow exited the program")
@@ -221,6 +340,7 @@ def main() -> int:
             record_frames(normal_binary, baseline_path)
             return 0
         compare_frames(normal_binary, baseline_path)
+        check_pipeline_source(baseline_path)
         check_motion(audit_binary)
         check_controls(normal_binary)
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:

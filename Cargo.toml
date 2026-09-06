@@ -8,7 +8,7 @@ publish = false
 phase0-audit = []
 
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
