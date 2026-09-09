@@ -37,8 +37,11 @@ const MAP_SIDE: usize = 256;
 const MAP_BYTES: usize = MAP_SIDE * MAP_SIDE;
 const GRID_RINGS: usize = 25;
 const GRID_LANES: usize = 73;
+#[cfg(feature = "phase0-audit")]
 const SPOKE_LINES: usize = GRID_LANES * GRID_RINGS;
+#[cfg(feature = "phase0-audit")]
 const RING_LINES: usize = GRID_RINGS * (GRID_LANES - 1);
+#[cfg(feature = "phase0-audit")]
 const STAR_LINES: usize = SPOKE_LINES + RING_LINES;
 const RING_INTERVAL: f32 = 0.05;
 const RING_SPEED: f32 = 1.0 / RING_INTERVAL;
@@ -48,23 +51,33 @@ const CLEAN_BIRTH: f32 = ring_birth(GRID_RINGS);
 const TX_BYTES: usize = 264_000;
 const RAW_CHUNK: usize = 3_072;
 const WATER: u8 = 76;
+#[cfg(feature = "phase0-audit")]
 const GRID_FOG_START: f32 = 4.0;
+#[cfg(feature = "phase0-audit")]
 const GRID_FOG_END: f32 = 6.0;
 const STARFIELD_HOLD: f32 = 4.0;
+#[cfg(feature = "phase0-audit")]
 const STARFIELD_FILL: f32 = 7.0;
+#[cfg(feature = "phase0-audit")]
 const STAR_ORGANIZE: f32 = 11.0;
 const GRID_SQUARE_START: f32 = 21.0;
 const GRID_HORIZONTAL: f32 = 29.0;
-const GRID_COLOR_FULL: f32 = GRID_HORIZONTAL - 2.0;
 const ORBIT_SEEK: f32 = 44.0;
 const CONTINENT_SEEK: f32 = 90.0;
 const DESCENT: f32 = 113.0;
+#[cfg(feature = "phase0-audit")]
 const PLANET_INTRO: f32 = 27.0;
 const APPROACH_SPEED: f32 = 0.28;
 const ORBIT_ENTRY: f32 = 28.0;
 const FLOW_FOCAL: f32 = 154.0;
 pub const METERS_PER_MILE: f64 = 1_609.344;
+const FEET_PER_MILE: f64 = 5_280.0;
 const PLANET_RADIUS_MILES: f64 = 13_500.0;
+const LIGHT_YEAR_MILES: f64 = 5_878_625_373_183.608;
+#[cfg(feature = "phase0-audit")]
+const SPEED_OF_LIGHT_MILES_PER_SECOND: f64 = 186_282.397_051_220_87;
+const STARFLIGHT_START_DISTANCE_WORLD: f64 = miles_to_world(LIGHT_YEAR_MILES * 4.0);
+const STARFLIGHT_JOIN_TIME: f64 = STARFIELD_HOLD as f64;
 const CLOSE_ORBIT_ALTITUDE_MILES: f64 = 100.0;
 pub const FINAL_ALTITUDE_METERS: f64 = 20.0;
 const FLOW_PLANET_RADIUS_WORLD: f64 = 0.115;
@@ -90,7 +103,7 @@ const FLOW_DESCENT_END: f64 = 116.0;
 pub const FLOW_PATH_END: f64 = 137.0;
 const FLOW_VALLEY_OVERHEAD: f64 = 98.0;
 const FLOW_VALLEY_CORRIDOR: f64 = 108.0;
-const FLOW_AIRPLANE_ALTITUDE_MILES: f64 = 30_000.0 / METERS_PER_MILE;
+const FLOW_AIRPLANE_ALTITUDE_MILES: f64 = 30_000.0 / FEET_PER_MILE;
 const TRAJECTORY_HZ: usize = 120;
 const TRAJECTORY_STEP: f64 = 1.0 / TRAJECTORY_HZ as f64;
 const TRAJECTORY_TABLE_END: usize = 140;
@@ -600,8 +613,9 @@ fn smooth_map(map: *const u8, x: f32, y: f32) -> f32 {
 
 fn render_demo(elapsed: f32, x_scale: f32) {
     let flow = flow_camera(elapsed);
+    let exposure_start = flow_camera((elapsed - FIELD_MOTION_BLUR_EXPOSURE).max(0.0));
     clear_depth_buffer();
-    render_continuous_grid(elapsed, &flow, x_scale);
+    render_universe_field(&exposure_start, &flow, x_scale);
     render_world_journey(elapsed, x_scale, &flow);
     draw_second_counter(elapsed);
 }
@@ -1018,6 +1032,7 @@ fn flow_field_basis() -> (DVec3, DVec3, DVec3) {
     (forward, right, down)
 }
 
+#[cfg(feature = "phase0-audit")]
 fn flow_field_dual_basis() -> (DVec3, DVec3, DVec3) {
     let (forward, right, down) = flow_field_basis();
     let forward = dvec_from_vec3(vec3_from_dvec(forward));
@@ -1034,6 +1049,613 @@ fn flow_field_dual_basis() -> (DVec3, DVec3, DVec3) {
         dvec_scale(cross(down, forward), 1.0 / determinant),
         dvec_scale(cross(forward, right), 1.0 / determinant),
     )
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct FieldLayout {
+    axis_origin: DVec3,
+    forward: DVec3,
+    right: DVec3,
+    down: DVec3,
+    radius: f64,
+    field_start_s: f64,
+    ordering_start_s: f64,
+    rings_full_s: f64,
+    rails_full_s: f64,
+    square_start_s: f64,
+    square_end_s: f64,
+    planet_s: f64,
+    field_end_s: f64,
+}
+
+#[cfg(feature = "phase0-audit")]
+#[derive(Clone, Copy, PartialEq)]
+enum FieldRegion {
+    Starfield,
+    Streaks,
+    LogarithmicRings,
+    CircularTunnel,
+    SquaringTunnel,
+    SquaredTunnel,
+}
+
+const FIELD_ORDERING_START_S: f64 = f64::from_bits(0xc05a_3ec8_bd48_c4db);
+const FIELD_RINGS_FULL_S: f64 = f64::from_bits(0xc052_052f_23af_29a4);
+const FIELD_RAILS_FULL_S: f64 = f64::from_bits(0xc03d_7ca2_b4e0_c2a4);
+const FIELD_SQUARE_START_S: f64 = f64::from_bits(0xc039_a498_5eb4_57d9);
+const FIELD_WORLD_START_S: f64 = f64::from_bits(0xc1a7_e0f0_f8e1_9540);
+const FIELD_WORLD_END_S: f64 = f64::from_bits(0x4034_3d70_a3d7_0a3e);
+
+#[cfg(feature = "phase0-audit")]
+fn field_axis_coordinate(axis_origin: DVec3, forward: DVec3, point: DVec3) -> f64 {
+    dvec_dot(dvec_sub(point, axis_origin), forward)
+}
+
+const UNIVERSE_FIELD: FieldLayout = FieldLayout {
+    axis_origin: DVec3 {
+        x: f64::from_bits(0x0000_0000_0000_0000),
+        y: f64::from_bits(0xc005_eb41_3967_09d9),
+        z: f64::from_bits(0x3fd5_4b75_42ed_9638),
+    },
+    forward: DVec3 {
+        x: f64::from_bits(0x8000_0000_0000_0000),
+        y: f64::from_bits(0x3fbe_dca9_f1b1_5f47),
+        z: f64::from_bits(0x3fef_c440_d8c1_da54),
+    },
+    right: DVec3 { x: 1.0, y: 0.0, z: 0.0 },
+    down: DVec3 {
+        x: 0.0,
+        y: f64::from_bits(0x3fef_c440_d8c1_da53),
+        z: f64::from_bits(0xbfbe_dca9_f1b1_5f45),
+    },
+    radius: GRID_BOTTOM_HEIGHT_WORLD,
+    field_start_s: FIELD_WORLD_START_S,
+    ordering_start_s: FIELD_ORDERING_START_S,
+    rings_full_s: FIELD_RINGS_FULL_S,
+    rails_full_s: FIELD_RAILS_FULL_S,
+    square_start_s: FIELD_SQUARE_START_S,
+    square_end_s: 0.0,
+    planet_s: 0.0,
+    field_end_s: FIELD_WORLD_END_S,
+};
+
+#[derive(Clone, Copy)]
+struct Universe {
+    field: FieldLayout,
+    planet_center: DVec3,
+    atmosphere_radius: f64,
+    sun_direction: Vec3,
+}
+
+const UNIVERSE: Universe = Universe {
+    field: UNIVERSE_FIELD,
+    planet_center: PLANET_CENTER,
+    atmosphere_radius: FLOW_ATMOSPHERE_RADIUS_WORLD,
+    sun_direction: SUN_DIRECTION,
+};
+
+fn universe() -> Universe {
+    UNIVERSE
+}
+
+#[cfg(feature = "phase0-audit")]
+fn universe_field_layout() -> FieldLayout {
+    universe().field
+}
+
+#[cfg(feature = "phase0-audit")]
+fn field_region(layout: FieldLayout, s: f64) -> FieldRegion {
+    if s < layout.ordering_start_s {
+        FieldRegion::Starfield
+    } else if s < layout.rings_full_s {
+        FieldRegion::Streaks
+    } else if s < layout.rails_full_s {
+        FieldRegion::LogarithmicRings
+    } else if s < layout.square_start_s {
+        FieldRegion::CircularTunnel
+    } else if s < layout.square_end_s {
+        FieldRegion::SquaringTunnel
+    } else {
+        FieldRegion::SquaredTunnel
+    }
+}
+
+fn field_square_amount(layout: FieldLayout, s: f64) -> f64 {
+    smootherstep_f64(
+        (s - layout.square_start_s) / (layout.square_end_s - layout.square_start_s),
+    )
+}
+
+fn field_section(theta: f64, square_amount: f64) -> (f64, f64) {
+    let angle = (theta * 1_024.0) as i32;
+    let cardinal = angle & 1_023;
+    let (circular_x, circular_y) = match cardinal {
+        0 => (1.0, 0.0),
+        256 => (0.0, 1.0),
+        512 => (-1.0, 0.0),
+        768 => (0.0, -1.0),
+        _ => {
+            let raw_x = sine(angle + 256) as f64;
+            let raw_y = sine(angle) as f64;
+            let inverse_length =
+                1.0 / sqrt_f64(raw_x * raw_x + raw_y * raw_y).max(1.0e-12);
+            (raw_x * inverse_length, raw_y * inverse_length)
+        }
+    };
+    let square_edge = circular_x.abs().max(circular_y.abs()).max(0.001);
+    let square_x = circular_x / square_edge;
+    let square_y = circular_y / square_edge;
+    let section_x = circular_x + (square_x - circular_x) * square_amount;
+    let section_y = circular_y + (square_y - circular_y) * square_amount;
+    (section_x, section_y)
+}
+
+fn field_point(layout: FieldLayout, s: f64, theta: f64) -> DVec3 {
+    let section = field_section(theta, field_square_amount(layout, s));
+    let mut point = dvec_add(
+        layout.axis_origin,
+        dvec_add(
+            dvec_scale(layout.forward, s),
+            dvec_add(
+                dvec_scale(layout.right, section.0 * layout.radius),
+                dvec_scale(layout.down, section.1 * layout.radius),
+            ),
+        ),
+    );
+    let relative_planet = dvec_sub(point, universe().planet_center);
+    let lateral = dvec_dot(relative_planet, layout.right);
+    let axial = dvec_dot(relative_planet, layout.forward);
+    let floor_weight = smootherstep_f64((section.1 - 0.25) / 0.75);
+    let well_radius_squared = GRID_WELL_RADIUS_WORLD * GRID_WELL_RADIUS_WORLD;
+    let well = floor_weight * well_radius_squared
+        / (lateral * lateral + axial * axial + well_radius_squared);
+    point = dvec_add(
+        point,
+        dvec_scale(layout.down, GRID_WELL_DEPTH_WORLD * well),
+    );
+    point
+}
+
+const FIELD_RING_CHUNK_SIZE: i32 = 16;
+const FIELD_RING_RATIO: f64 = 17.0 / 16.0;
+const FIELD_RING_BASE_SPACING: f64 = GRID_BOTTOM_HEIGHT_WORLD / 16.0;
+const FIELD_STAR_OBJECTS_PER_CELL: u16 = 272;
+const FIELD_STAR_OBJECT_HASH_LIMIT: i32 = 48;
+const FIELD_MESH_FADE_START_WORLD: f64 = 18.0;
+const FIELD_MESH_MAX_DISTANCE_WORLD: f64 = 26.0;
+const FIELD_MOTION_BLUR_EXPOSURE: f32 = 0.032;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FieldRingIdentity {
+    chunk: i32,
+    ring: u8,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FieldEdgeKind {
+    Axial,
+    Circumferential,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FieldEdgeIdentity {
+    ring: FieldRingIdentity,
+    lane: u16,
+    kind: FieldEdgeKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct StarObjectIdentity {
+    cell: FieldRingIdentity,
+    object: u16,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RingObjectIdentity {
+    ring: FieldRingIdentity,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RailObjectIdentity {
+    first_ring: FieldRingIdentity,
+    lane: u16,
+}
+
+fn field_ring_identity(ordinal: i32) -> FieldRingIdentity {
+    let chunk = ordinal.div_euclid(FIELD_RING_CHUNK_SIZE);
+    FieldRingIdentity {
+        chunk,
+        ring: ordinal.rem_euclid(FIELD_RING_CHUNK_SIZE) as u8,
+    }
+}
+
+fn field_ring_ordinal(identity: FieldRingIdentity) -> i32 {
+    identity.chunk * FIELD_RING_CHUNK_SIZE + identity.ring as i32
+}
+
+fn field_ring_distance(steps: u32) -> f64 {
+    let mut distance = 0.0;
+    let mut spacing = FIELD_RING_BASE_SPACING;
+    let mut step = 0u32;
+    while step < steps {
+        distance += spacing;
+        spacing *= FIELD_RING_RATIO;
+        step += 1;
+    }
+    distance
+}
+
+fn field_ring_s(layout: FieldLayout, identity: FieldRingIdentity) -> f64 {
+    let ordinal = field_ring_ordinal(identity);
+    if ordinal < 0 {
+        layout.planet_s - field_ring_distance(ordinal.wrapping_neg() as u32)
+    } else {
+        layout.planet_s + field_ring_distance(ordinal as u32)
+    }
+}
+
+fn field_first_ring_ordinal(layout: FieldLayout) -> i32 {
+    let mut ordinal = 0i32;
+    while field_ring_s(layout, field_ring_identity(ordinal)) > layout.field_start_s {
+        ordinal -= 1;
+    }
+    ordinal
+}
+
+fn field_last_ring_ordinal(layout: FieldLayout) -> i32 {
+    let mut ordinal = 0i32;
+    while field_ring_s(layout, field_ring_identity(ordinal)) < layout.field_end_s {
+        ordinal += 1;
+    }
+    ordinal
+}
+
+#[cfg(feature = "phase0-audit")]
+fn field_first_physical_ring_ordinal(layout: FieldLayout) -> i32 {
+    let mut ordinal = field_first_ring_ordinal(layout);
+    while field_ring_s(layout, field_ring_identity(ordinal)) < layout.rings_full_s {
+        ordinal += 1;
+    }
+    ordinal
+}
+
+fn field_mesh_vertex(
+    layout: FieldLayout,
+    ring: FieldRingIdentity,
+    lane: usize,
+) -> DVec3 {
+    let theta = (lane % (GRID_LANES - 1)) as f64 / (GRID_LANES - 1) as f64;
+    field_point(layout, field_ring_s(layout, ring), theta)
+}
+
+fn field_edge_points(layout: FieldLayout, identity: FieldEdgeIdentity) -> (DVec3, DVec3) {
+    let ordinal = field_ring_ordinal(identity.ring);
+    let lane = identity.lane as usize % (GRID_LANES - 1);
+    match identity.kind {
+        FieldEdgeKind::Axial => (
+            field_mesh_vertex(layout, identity.ring, lane),
+            field_mesh_vertex(layout, field_ring_identity(ordinal + 1), lane),
+        ),
+        FieldEdgeKind::Circumferential => (
+            field_mesh_vertex(layout, identity.ring, lane),
+            field_mesh_vertex(layout, identity.ring, lane + 1),
+        ),
+    }
+}
+
+fn star_object_seed(identity: StarObjectIdentity) -> i32 {
+    field_ring_ordinal(identity.cell)
+        .wrapping_mul(1_009)
+        .wrapping_add(identity.object as i32 * 1_747)
+}
+
+fn star_object_position(layout: FieldLayout, identity: StarObjectIdentity) -> DVec3 {
+    let ordinal = field_ring_ordinal(identity.cell);
+    let first_s = field_ring_s(layout, identity.cell);
+    let next_s = field_ring_s(layout, field_ring_identity(ordinal + 1));
+    let seed = star_object_seed(identity);
+    let axial_amount = (hash(seed, 1_193) as f64 + 0.5) / 256.0;
+    let s = first_s + (next_s - first_s) * axial_amount;
+    let volume_radius = layout
+        .radius
+        .max((layout.rings_full_s - s).max(0.0) * 1.08);
+    let x = (hash(seed, 337) - 128) as f64 / 128.0 * volume_radius;
+    let y = (hash(seed, 811) - 128) as f64 / 128.0 * volume_radius;
+    dvec_add(
+        layout.axis_origin,
+        dvec_add(
+            dvec_scale(layout.forward, s),
+            dvec_add(dvec_scale(layout.right, x), dvec_scale(layout.down, y)),
+        ),
+    )
+}
+
+fn star_object_exists(layout: FieldLayout, identity: StarObjectIdentity) -> bool {
+    let ordinal = field_ring_ordinal(identity.cell);
+    let first_s = field_ring_s(layout, identity.cell);
+    let next_s = field_ring_s(layout, field_ring_identity(ordinal + 1));
+    let axial_amount = (hash(star_object_seed(identity), 1_193) as f64 + 0.5) / 256.0;
+    let s = first_s + (next_s - first_s) * axial_amount;
+    s >= layout.field_start_s
+        && s < layout.rings_full_s
+        && hash(star_object_seed(identity), 2_281) < FIELD_STAR_OBJECT_HASH_LIMIT
+}
+
+fn star_cell_may_project(
+    layout: FieldLayout,
+    cell: FieldRingIdentity,
+    camera: &FlowCamera,
+) -> bool {
+    let ordinal = field_ring_ordinal(cell);
+    let first_s = field_ring_s(layout, cell).max(layout.field_start_s);
+    let next_s = field_ring_s(layout, field_ring_identity(ordinal + 1))
+        .min(layout.rings_full_s);
+    if next_s <= first_s {
+        return false;
+    }
+    let center_s = (first_s + next_s) * 0.5;
+    let half_axial = (next_s - first_s) * 0.5;
+    let transverse_radius = layout
+        .radius
+        .max((layout.rings_full_s - first_s).max(0.0) * 1.08);
+    let center = dvec_add(layout.axis_origin, dvec_scale(layout.forward, center_s));
+    let relative = dvec_sub(center, camera.position);
+    let maximum_depth = dvec_dot_vec3(relative, camera.forward)
+        + dvec_dot_vec3(layout.forward, camera.forward).abs() * half_axial
+        + dvec_dot_vec3(layout.right, camera.forward).abs() * transverse_radius
+        + dvec_dot_vec3(layout.down, camera.forward).abs() * transverse_radius;
+    maximum_depth > camera.near_plane
+}
+
+fn ring_object_segment(
+    layout: FieldLayout,
+    identity: RingObjectIdentity,
+    lane: u16,
+) -> (DVec3, DVec3) {
+    field_edge_points(
+        layout,
+        FieldEdgeIdentity {
+            ring: identity.ring,
+            lane,
+            kind: FieldEdgeKind::Circumferential,
+        },
+    )
+}
+
+fn rail_object_segment(layout: FieldLayout, identity: RailObjectIdentity) -> (DVec3, DVec3) {
+    field_edge_points(
+        layout,
+        FieldEdgeIdentity {
+            ring: identity.first_ring,
+            lane: identity.lane,
+            kind: FieldEdgeKind::Axial,
+        },
+    )
+}
+
+#[cfg(feature = "phase0-audit")]
+fn project_field_star_exposure(
+    layout: FieldLayout,
+    identity: StarObjectIdentity,
+    exposure_start: &FlowCamera,
+    exposure_end: &FlowCamera,
+) -> Option<((f32, f32, f32), (f32, f32, f32))> {
+    let point = star_object_position(layout, identity);
+    Some((
+        project_flow_depth(exposure_start, point)?,
+        project_flow_depth(exposure_end, point)?,
+    ))
+}
+
+#[cfg(feature = "phase0-audit")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct CanonicalStarParticleIdentity {
+    line: usize,
+    generation: i32,
+}
+
+#[cfg(feature = "phase0-audit")]
+fn canonical_star_generation(index: usize, time: f32, clean_birth: f32) -> i32 {
+    let period = GRID_RINGS as f32 * RING_INTERVAL;
+    let phase = line_ring(index) as f32 * RING_INTERVAL;
+    let sample_time = time.min(clean_birth - 0.000_1);
+    let relative_cycle = (sample_time - phase) / period;
+    let mut generation = relative_cycle as i32;
+    if relative_cycle < generation as f32 {
+        generation -= 1;
+    }
+    generation
+}
+
+#[cfg(feature = "phase0-audit")]
+fn canonical_star_particle_reference(layout: FieldLayout, time: f32) -> DVec3 {
+    let approach = approach_camera_reference(time as f64);
+    let starflight = starflight_displacement(time as f64);
+    let outward = dvec_scale(layout.forward, -1.0);
+    let relief = flow_surface_relief_world(flow_normal_to_planet(outward));
+    dvec_add(
+        layout.axis_origin,
+        dvec_scale(
+            outward,
+            FLOW_PLANET_RADIUS_WORLD + approach.0 + relief + starflight.0,
+        ),
+    )
+}
+
+#[cfg(feature = "phase0-audit")]
+fn canonical_star_particle_local_position(
+    identity: CanonicalStarParticleIdentity,
+    time: f32,
+) -> Option<((f32, f32), f32)> {
+    let id = identity.line as i32;
+    let (lane_a, _, lane_b, _) = line_coordinates(identity.line);
+    let period = GRID_RINGS as f32 * RING_INTERVAL;
+    let phase = line_ring(identity.line) as f32 * RING_INTERVAL;
+    let birth_time = phase + identity.generation as f32 * period;
+    let activation = -period
+        + hash(id, 2_281) as f32 / 255.0 * (STARFIELD_FILL + period);
+    if birth_time < activation {
+        return None;
+    }
+    let moving_row = outward_row(time, birth_time);
+    let amount = moving_row / 20.0;
+    let organization =
+        smoothstep((birth_time - STAR_ORGANIZE) / (CLEAN_BIRTH - STAR_ORGANIZE));
+    let birth_order = organization * 0.72;
+    let random_x = (hash(id, 337 + identity.generation * 17) - 128) as f32 / 112.0;
+    let random_y = (hash(id, 811 + identity.generation * 29) - 128) as f32 / 184.0;
+    let lane_middle = (lane_a + lane_b) * 0.5;
+    let cone = cone_direction(lane_middle);
+    let mut motion_x = random_x + (cone.0 - random_x) * birth_order;
+    let mut motion_y = random_y + (cone.1 - random_y) * birth_order;
+    let motion_length = fast_sqrt(motion_x * motion_x + motion_y * motion_y).max(0.001);
+    let exit_scale = (0.65 / motion_length).max(1.0);
+    motion_x *= exit_scale;
+    motion_y *= exit_scale;
+    let radius = amount * amount * 260.0;
+    Some(((motion_x * radius, motion_y * radius), moving_row))
+}
+
+#[cfg(feature = "phase0-audit")]
+fn canonical_star_particle_world_position(
+    layout: FieldLayout,
+    identity: CanonicalStarParticleIdentity,
+    time: f32,
+) -> Option<DVec3> {
+    let (local, moving_row) = canonical_star_particle_local_position(identity, time)?;
+    let amount = moving_row / 20.0;
+    let projective_radius = (amount * amount * 260.0).max(0.001) as f64;
+    let axial_depth = FLOW_FOCAL as f64 * 0.01 / projective_radius;
+    let (dual_forward, dual_right, dual_down) = flow_field_dual_basis();
+    Some(dvec_add(
+        canonical_star_particle_reference(layout, time),
+        dvec_add(
+            dvec_scale(dual_forward, axial_depth),
+            dvec_add(
+                dvec_scale(
+                    dual_right,
+                    local.0 as f64 * axial_depth / FLOW_FOCAL as f64,
+                ),
+                dvec_scale(
+                    dual_down,
+                    local.1 as f64 * axial_depth / FLOW_FOCAL as f64,
+                ),
+            ),
+        ),
+    ))
+}
+
+#[cfg(feature = "phase0-audit")]
+fn canonical_star_exposure_times(
+    identity: CanonicalStarParticleIdentity,
+    observation_time: f32,
+) -> Option<(f32, f32)> {
+    if canonical_star_generation(identity.line, observation_time, CLEAN_BIRTH)
+        != identity.generation
+    {
+        return None;
+    }
+    let (a, b, moving_row) = flyby_segment(identity.line, observation_time, CLEAN_BIRTH)?;
+    let local = canonical_star_particle_local_position(identity, observation_time)?.0;
+    let center_radius = (moving_row / 20.0) * (moving_row / 20.0) * 260.0;
+    if center_radius <= 0.0 {
+        return None;
+    }
+    let motion_x = local.0 / center_radius;
+    let motion_y = local.1 / center_radius;
+    let motion_squared = motion_x * motion_x + motion_y * motion_y;
+    let first_radius = (a.0 * motion_x + a.1 * motion_y) / motion_squared;
+    let second_radius = (b.0 * motion_x + b.1 * motion_y) / motion_squared;
+    if first_radius < 0.0 || second_radius < 0.0 {
+        return None;
+    }
+    let phase = line_ring(identity.line) as f32 * RING_INTERVAL;
+    let period = GRID_RINGS as f32 * RING_INTERVAL;
+    let birth_time = phase + identity.generation as f32 * period;
+    let first_row = (20.0 * sqrt_f64(first_radius as f64 / 260.0)) as f32;
+    let second_row = (20.0 * sqrt_f64(second_radius as f64 / 260.0)) as f32;
+    Some((
+        birth_time + first_row / RING_SPEED,
+        birth_time + second_row / RING_SPEED,
+    ))
+}
+
+#[cfg(feature = "phase0-audit")]
+fn audit_dvec_cross(a: DVec3, b: DVec3) -> DVec3 {
+    DVec3 {
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x,
+    }
+}
+
+#[cfg(feature = "phase0-audit")]
+fn canonical_projection_ray(camera: &FlowCamera, point: (f32, f32)) -> DVec3 {
+    let forward = dvec_from_vec3(camera.forward);
+    let right = dvec_from_vec3(camera.right);
+    let down = dvec_from_vec3(camera.down);
+    let determinant = dvec_dot(forward, audit_dvec_cross(right, down));
+    let dual_forward = dvec_scale(audit_dvec_cross(right, down), 1.0 / determinant);
+    let dual_right = dvec_scale(audit_dvec_cross(down, forward), 1.0 / determinant);
+    let dual_down = dvec_scale(audit_dvec_cross(forward, right), 1.0 / determinant);
+    dvec_add(
+        dual_forward,
+        dvec_add(
+            dvec_scale(
+                dual_right,
+                (point.0 - 160.0) as f64 / FLOW_FOCAL as f64,
+            ),
+            dvec_scale(
+                dual_down,
+                (point.1 - 100.0) as f64 / FLOW_FOCAL as f64,
+            ),
+        ),
+    )
+}
+
+#[cfg(feature = "phase0-audit")]
+fn fixed_candidate_from_rays(
+    first_camera: &FlowCamera,
+    first_point: (f32, f32),
+    second_camera: &FlowCamera,
+    second_point: (f32, f32),
+) -> Option<DVec3> {
+    let first_direction = canonical_projection_ray(first_camera, first_point);
+    let second_direction = canonical_projection_ray(second_camera, second_point);
+    let offset = dvec_sub(first_camera.position, second_camera.position);
+    let a = dvec_dot(first_direction, first_direction);
+    let b = dvec_dot(first_direction, second_direction);
+    let c = dvec_dot(second_direction, second_direction);
+    let d = dvec_dot(first_direction, offset);
+    let e = dvec_dot(second_direction, offset);
+    let denominator = a * c - b * b;
+    if denominator.abs() <= 1.0e-18 {
+        return None;
+    }
+    let first_distance = (b * e - c * d) / denominator;
+    let second_distance = (a * e - b * d) / denominator;
+    if first_distance <= 0.0 || second_distance <= 0.0 {
+        return None;
+    }
+    let first = dvec_add(
+        first_camera.position,
+        dvec_scale(first_direction, first_distance),
+    );
+    let second = dvec_add(
+        second_camera.position,
+        dvec_scale(second_direction, second_distance),
+    );
+    Some(dvec_scale(dvec_add(first, second), 0.5))
+}
+
+#[cfg(feature = "phase0-audit")]
+fn projected_point_error(camera: &FlowCamera, world: DVec3, expected: (f32, f32)) -> f32 {
+    let Some(actual) = project_flow_depth(camera, world) else {
+        return f32::MAX;
+    };
+    (actual.0 - expected.0)
+        .abs()
+        .max((actual.1 - expected.1).abs())
 }
 
 fn trajectory_relief_at(time: f64) -> f64 {
@@ -1074,7 +1696,8 @@ fn trajectory_state(time: f64) -> TrajectoryState {
     let meridian_sine = compose(meridian_sine, state.meridian_rate, acceleration.2);
     let meridian_cosine = compose(meridian_cosine, state.meridian_rate, acceleration.2);
     let relief = trajectory_relief_state(time);
-    let radius = FLOW_PLANET_RADIUS_WORLD + state.clearance + relief.0;
+    let starflight = starflight_displacement(time);
+    let radius = FLOW_PLANET_RADIUS_WORLD + state.clearance + relief.0 + starflight.0;
     let product = |a: (f64, f64, f64), b: (f64, f64, f64)| {
         (a.0 * b.0, a.1 * b.0 + a.0 * b.1, a.2 * b.0 + 2.0 * a.1 * b.1 + a.0 * b.2)
     };
@@ -1109,8 +1732,8 @@ fn trajectory_state(time: f64) -> TrajectoryState {
     let unit_z = product(raw_z, inverse_length);
     let radial = (
         radius,
-        state.clearance_rate + relief.1,
-        acceleration.0 + relief.2,
+        state.clearance_rate + relief.1 + starflight.1,
+        acceleration.0 + relief.2 + starflight.2,
     );
     let x = product(radial, unit_x);
     let y = product(radial, unit_y);
@@ -1246,7 +1869,6 @@ fn flow_camera(time: f32) -> FlowCamera {
     }
 }
 
-#[cfg(feature = "phase0-audit")]
 fn project_flow_depth(camera: &FlowCamera, point: DVec3) -> Option<(f32, f32, f32)> {
     let relative = dvec_sub(point, camera.position);
     let depth = dvec_dot(relative, dvec_from_vec3(camera.forward));
@@ -1262,13 +1884,66 @@ fn project_flow_depth(camera: &FlowCamera, point: DVec3) -> Option<(f32, f32, f3
     ))
 }
 
+fn field_mesh_visibility(layout: FieldLayout, s: f64, camera: &FlowCamera) -> f32 {
+    let ring_center = dvec_add(layout.axis_origin, dvec_scale(layout.forward, s));
+    let distance = dvec_length(dvec_sub(ring_center, camera.position));
+    (1.0
+        - smootherstep_f64(
+            (distance - FIELD_MESH_FADE_START_WORLD)
+                / (FIELD_MESH_MAX_DISTANCE_WORLD - FIELD_MESH_FADE_START_WORLD),
+        )) as f32
+}
+
+fn project_field_segment(
+    mut a: DVec3,
+    mut b: DVec3,
+    camera: &FlowCamera,
+    x_scale: f32,
+) -> Option<((f32, f32, f32), (f32, f32, f32))> {
+    let near = camera.near_plane * 1.1;
+    let mut relative_a = dvec_sub(a, camera.position);
+    let mut relative_b = dvec_sub(b, camera.position);
+    let depth_a = dvec_dot_vec3(relative_a, camera.forward);
+    let depth_b = dvec_dot_vec3(relative_b, camera.forward);
+    if depth_a <= near && depth_b <= near {
+        return None;
+    }
+    if depth_a <= near {
+        let amount = (near - depth_a) / (depth_b - depth_a).max(1.0e-12);
+        a = dvec_add(a, dvec_scale(dvec_sub(b, a), amount));
+        relative_a = dvec_sub(a, camera.position);
+    } else if depth_b <= near {
+        let amount = (near - depth_b) / (depth_a - depth_b).max(1.0e-12);
+        b = dvec_add(b, dvec_scale(dvec_sub(a, b), amount));
+        relative_b = dvec_sub(b, camera.position);
+    }
+    let project = |relative: DVec3| {
+        let depth = dvec_dot_vec3(relative, camera.forward);
+        if depth <= near {
+            return None;
+        }
+        Some((
+            160.0
+                + (dvec_dot_vec3(relative, camera.right) / depth * FLOW_FOCAL as f64)
+                    as f32
+                    * x_scale,
+            100.0
+                + (dvec_dot_vec3(relative, camera.down) / depth * FLOW_FOCAL as f64)
+                    as f32,
+            depth as f32,
+        ))
+    };
+    Some((project(relative_a)?, project(relative_b)?))
+}
+
 #[cfg(feature = "phase0-audit")]
 fn project_flow(camera: &FlowCamera, point: DVec3) -> Option<(f32, f32)> {
     let projected = project_flow_depth(camera, point)?;
     Some((projected.0, projected.1))
 }
 
-fn flow_grid_world_point(time: f32, section: (f32, f32), depth: f32) -> DVec3 {
+#[cfg(feature = "phase0-audit")]
+fn canonical_flow_grid_world_point(time: f32, section: (f32, f32), depth: f32) -> DVec3 {
     // Ring age is the physical flow coordinate: new mesh is emitted at
     // effectively infinite depth on the field axis and moves toward the
     // approach camera as `depth` grows. The mesh is placed in world space
@@ -1279,7 +1954,7 @@ fn flow_grid_world_point(time: f32, section: (f32, f32), depth: f32) -> DVec3 {
     let amount = depth / 20.0;
     let projective_radius = (amount * amount * 260.0).max(0.001) as f64;
     let axial_depth = FLOW_FOCAL as f64 * SECTION_SCALE / projective_radius;
-    let transport = flow_field_transport(time);
+    let transport = canonical_flow_field_transport(time);
     let mut point = dvec_add(
         transport,
         dvec_add(
@@ -1301,7 +1976,8 @@ fn flow_grid_world_point(time: f32, section: (f32, f32), depth: f32) -> DVec3 {
     point
 }
 
-fn flow_field_transport(time: f32) -> DVec3 {
+#[cfg(feature = "phase0-audit")]
+fn canonical_flow_field_transport(time: f32) -> DVec3 {
     // Through the approach, the camera and field share the canonical
     // longitudinal flow. At capture the camera curves toward orbit while the
     // field continues through and past the planet from the same position,
@@ -1335,7 +2011,8 @@ fn flow_field_transport(time: f32) -> DVec3 {
     )
 }
 
-fn flow_star_world_point(
+#[cfg(feature = "phase0-audit")]
+fn canonical_flow_star_world_point(
     transport: DVec3,
     local_offset: (f32, f32),
     moving_row: f32,
@@ -1365,18 +2042,21 @@ fn flow_star_world_point(
     )
 }
 
-fn project_flow_star_segment(
-    transport: DVec3,
+#[cfg(feature = "phase0-audit")]
+fn project_canonical_flow_star_segment(
+    _transport: DVec3,
     local_a: (f32, f32),
     local_b: (f32, f32),
     moving_row: f32,
     camera: &FlowCamera,
     x_scale: f32,
 ) -> Option<((f32, f32, f32), (f32, f32, f32))> {
-    let a = flow_star_world_point(transport, local_a, moving_row);
-    let b = flow_star_world_point(transport, local_b, moving_row);
-    let project = |point: DVec3| {
-        let relative = dvec_sub(point, camera.position);
+    // This is the rejected screen-law oracle, evaluated in the camera-relative
+    // frame so astronomical world coordinates cannot erase its tiny offsets.
+    let origin = DVec3 { x: 0.0, y: 0.0, z: 0.0 };
+    let a = canonical_flow_star_world_point(origin, local_a, moving_row);
+    let b = canonical_flow_star_world_point(origin, local_b, moving_row);
+    let project = |relative: DVec3| {
         let depth = dvec_dot_vec3(relative, camera.forward);
         if depth <= camera.near_plane {
             return None;
@@ -1395,7 +2075,8 @@ fn project_flow_star_segment(
     Some((project(a)?, project(b)?))
 }
 
-fn project_flow_grid_segment(
+#[cfg(feature = "phase0-audit")]
+fn project_canonical_flow_grid_segment(
     time: f32,
     section_a: (f32, f32),
     depth_a: f32,
@@ -1404,8 +2085,8 @@ fn project_flow_grid_segment(
     camera: &FlowCamera,
     x_scale: f32,
 ) -> Option<((f32, f32, f32), (f32, f32, f32))> {
-    let mut a = flow_grid_world_point(time, section_a, depth_a);
-    let mut b = flow_grid_world_point(time, section_b, depth_b);
+    let mut a = canonical_flow_grid_world_point(time, section_a, depth_a);
+    let mut b = canonical_flow_grid_world_point(time, section_b, depth_b);
     let near = camera.near_plane * 1.1;
     let mut relative_a = dvec_sub(a, camera.position);
     let mut relative_b = dvec_sub(b, camera.position);
@@ -1530,6 +2211,8 @@ fn run_phase1_precision_audit() -> ! {
     phase0_require(
         (world_to_miles(FLOW_PLANET_RADIUS_WORLD) - PLANET_RADIUS_MILES).abs() < 1.0e-9
             && (world_to_meters(FLOW_FINAL_ALTITUDE_WORLD) - FINAL_ALTITUDE_METERS).abs()
+                < 1.0e-9
+            && (FLOW_AIRPLANE_ALTITUDE_MILES * FEET_PER_MILE - 30_000.0).abs()
                 < 1.0e-9,
         120,
         b"physical scale constants disagree",
@@ -1678,11 +2361,11 @@ fn run_phase2_motion_audit() -> ! {
     }
 
     let controls = [
-        (FLOW_ORBIT_THREE_END, 30_000.0),
-        (FLOW_HIGH_PASS_END, 30_000.0),
-        (FLOW_VALLEY_OVERHEAD, 1_500.0),
-        (FLOW_VALLEY_CORRIDOR, 200.0),
-        (FLOW_DESCENT_END, FINAL_ALTITUDE_METERS),
+        (FLOW_ORBIT_THREE_END, FLOW_AIRPLANE_ALTITUDE_MILES),
+        (FLOW_HIGH_PASS_END, FLOW_AIRPLANE_ALTITUDE_MILES),
+        (FLOW_VALLEY_OVERHEAD, 1_500.0 / METERS_PER_MILE),
+        (FLOW_VALLEY_CORRIDOR, 200.0 / METERS_PER_MILE),
+        (FLOW_DESCENT_END, FINAL_ALTITUDE_METERS / METERS_PER_MILE),
     ];
     index = 0;
     while index < controls.len() {
@@ -1694,12 +2377,12 @@ fn run_phase2_motion_audit() -> ! {
                 - flow_surface_relief_world(surface_normal),
         );
         phase2_require(
-            (state.clearance_miles * METERS_PER_MILE - controls[index].1).abs() < 0.5,
+            ((state.clearance_miles - controls[index].1) * METERS_PER_MILE).abs() < 0.5,
             145,
             b"integrated radial control missed a physical-altitude target",
         );
         phase2_require(
-            (actual_agl * METERS_PER_MILE - controls[index].1).abs() < 0.5,
+            ((actual_agl - controls[index].1) * METERS_PER_MILE).abs() < 0.5,
             148,
             b"trajectory clearance is not displaced-surface AGL",
         );
@@ -1747,6 +2430,763 @@ fn phase3_require(condition: bool, code: usize, message: &[u8]) {
 
 #[cfg(feature = "phase0-audit")]
 fn run_phase3_unified_camera_audit() -> ! {
+    let fixed_universe = universe();
+    let field = fixed_universe.field;
+    let repeated_field = universe_field_layout();
+    phase3_require(
+        field == repeated_field
+            && fixed_universe.planet_center == PLANET_CENTER
+            && fixed_universe.atmosphere_radius == FLOW_ATMOSPHERE_RADIUS_WORLD
+            && fixed_universe.sun_direction.x.to_bits() == SUN_DIRECTION.x.to_bits()
+            && fixed_universe.sun_direction.y.to_bits() == SUN_DIRECTION.y.to_bits()
+            && fixed_universe.sun_direction.z.to_bits() == SUN_DIRECTION.z.to_bits()
+            && field.field_start_s < field.ordering_start_s
+            && field.ordering_start_s < field.rings_full_s
+            && field.rings_full_s < field.rails_full_s
+            && field.rails_full_s < field.square_start_s
+            && field.square_start_s < field.square_end_s
+            && field.square_end_s == field.planet_s
+            && field.planet_s < field.field_end_s,
+        168,
+        b"anchored field regions are not deterministic and spatially ordered",
+    );
+    phase3_require(
+        universe_space_visibility(&flow_camera(FLOW_DESCENT_START as f32)) == 1.0
+            && universe_space_visibility(&flow_camera(FLOW_ORBIT_THREE_END as f32)) == 0.0
+            && universe_space_visibility(&flow_camera(65.0)) == 0.0,
+        168,
+        b"physical atmosphere does not continuously extinguish the space field by 30000 feet",
+    );
+    let camera_s = |time: f64| {
+        field_axis_coordinate(field.axis_origin, field.forward, trajectory_state(time).position)
+    };
+    phase3_require(
+        (field.field_start_s - (camera_s(0.0) - GRID_BOTTOM_HEIGHT_WORLD * 8.0)).abs()
+            < 1.0e-5,
+        168,
+        b"fixed astronomical field start no longer matches the opening camera",
+    );
+    phase3_require(
+        (field.ordering_start_s - camera_s(STARFIELD_HOLD as f64)).abs() < 1.0e-5,
+        168,
+        b"fixed astronomical streak boundary no longer matches its event",
+    );
+    phase3_require(
+        (field.rings_full_s - camera_s(STAR_ORGANIZE as f64)).abs() < 1.0e-5
+            && (field.rails_full_s - camera_s(CLEAN_BIRTH as f64)).abs() < 1.0e-5
+            && (field.square_start_s - camera_s(GRID_SQUARE_START as f64)).abs() < 1.0e-5,
+        168,
+        b"fixed near-field boundaries no longer match the approved approach",
+    );
+    let light_year_world = miles_to_world(LIGHT_YEAR_MILES);
+    let speed_of_light_world = miles_to_world(SPEED_OF_LIGHT_MILES_PER_SECOND);
+    let opening_to_grid = field.rings_full_s - camera_s(0.0);
+    let opening_grid_radius_pixels =
+        FLOW_FOCAL as f64 * field.radius / opening_to_grid.max(1.0e-12);
+    let mut starflight_time = 0.0f64;
+    let mut previous_starflight_s = camera_s(0.0) - 1.0;
+    let mut minimum_starflight_speed = f64::MAX;
+    while starflight_time <= STAR_ORGANIZE as f64 {
+        let state = trajectory_state(starflight_time);
+        let s = field_axis_coordinate(field.axis_origin, field.forward, state.position);
+        minimum_starflight_speed = minimum_starflight_speed.min(dvec_length(state.velocity));
+        phase3_require(
+            s > previous_starflight_s,
+            185,
+            b"astronomical approach does not move monotonically toward the grid",
+        );
+        previous_starflight_s = s;
+        starflight_time += 0.25;
+    }
+    phase3_require(
+        (opening_to_grid / light_year_world - 4.0).abs() < 0.001
+            && opening_grid_radius_pixels < 0.000_1
+            && minimum_starflight_speed > speed_of_light_world
+            && starflight_displacement(STARFLIGHT_JOIN_TIME) == (0.0, 0.0, 0.0),
+        185,
+        b"opening field is not astronomical, subpixel, superluminal, and C2-joined",
+    );
+    phase3_require(
+        (dvec_length(field.forward) - 1.0).abs() < 1.0e-6
+            && (dvec_length(field.right) - 1.0).abs() < 1.0e-6
+            && (dvec_length(field.down) - 1.0).abs() < 1.0e-6
+            && dvec_dot(field.forward, field.right).abs() < 1.0e-6
+            && dvec_dot(field.forward, field.down).abs() < 1.0e-6
+            && dvec_dot(field.right, field.down).abs() < 1.0e-6
+            && dvec_length(dvec_sub(
+                field.axis_origin,
+                dvec_sub(
+                    PLANET_CENTER,
+                    dvec_scale(field.down, GRID_APPROACH_AXIS_OFFSET),
+                ),
+            )) < 1.0e-12,
+        168,
+        b"anchored field frame is not fixed and orthonormal",
+    );
+    let midpoint = |a: f64, b: f64| a + (b - a) * 0.5;
+    phase3_require(
+        field_region(field, field.field_start_s) == FieldRegion::Starfield
+            && field_region(
+                field,
+                midpoint(field.ordering_start_s, field.rings_full_s),
+            ) == FieldRegion::Streaks
+            && field_region(
+                field,
+                midpoint(field.rings_full_s, field.rails_full_s),
+            ) == FieldRegion::LogarithmicRings
+            && field_region(
+                field,
+                midpoint(field.rails_full_s, field.square_start_s),
+            ) == FieldRegion::CircularTunnel
+            && field_region(
+                field,
+                midpoint(field.square_start_s, field.square_end_s),
+            ) == FieldRegion::SquaringTunnel
+            && field_region(field, field.field_end_s) == FieldRegion::SquaredTunnel,
+        168,
+        b"field regions do not cover the complete star-to-square geometry",
+    );
+    let circular_s = midpoint(field.rails_full_s, field.square_start_s);
+    let circular_center = dvec_add(field.axis_origin, dvec_scale(field.forward, circular_s));
+    let circular_right = field_point(field, circular_s, 0.0);
+    let circular_top = field_point(field, circular_s, 0.75);
+    let square_section = field_section(0.125, 1.0);
+    let planet_plate = field_point(field, field.planet_s, 0.25);
+    phase3_require(
+        (dvec_length(dvec_sub(circular_right, circular_center)) - field.radius).abs()
+            < 1.0e-5
+            && (dvec_length(dvec_sub(circular_top, circular_center)) - field.radius).abs()
+                < 1.0e-5,
+        168,
+        b"field circular region is not a world-space cylinder",
+    );
+    phase3_require(
+        (square_section.0.abs().max(square_section.1.abs()) - 1.0)
+            .abs()
+            < 1.0e-5
+            && square_section.0.abs() > 0.99
+            && square_section.1.abs() > 0.99
+            && field_square_amount(field, field.rails_full_s) == 0.0
+            && field_square_amount(field, field.square_end_s) == 1.0,
+        168,
+        b"field circular-to-square cross-section is inconsistent",
+    );
+    phase3_require(
+        dvec_length(dvec_sub(planet_plate, PLANET_CENTER)) < 1.0e-9
+            && field_point(field, circular_s, 0.0) == circular_right,
+        168,
+        b"fixed field plate misses the planet or changes identity",
+    );
+    let mut ordinal = -256i32;
+    while ordinal <= 256 {
+        let identity = field_ring_identity(ordinal);
+        phase3_require(
+            identity.ring < FIELD_RING_CHUNK_SIZE as u8
+                && field_ring_ordinal(identity) == ordinal
+                && field_ring_s(field, identity).to_bits()
+                    == field_ring_s(repeated_field, identity).to_bits(),
+            183,
+            b"stable ring identity changes chunk or world coordinate",
+        );
+        ordinal += 1;
+    }
+    let first_ring = field_first_ring_ordinal(field);
+    let first_physical_ring = field_first_physical_ring_ordinal(field);
+    let last_ring = field_last_ring_ordinal(field);
+    let ring_object_count = (last_ring - first_physical_ring + 1) as u32;
+    let rail_object_count = (ring_object_count - 1) * (GRID_LANES - 1) as u32;
+    let mut star_object_count = 0u32;
+    let mut object_ordinal = first_ring;
+    while object_ordinal < first_physical_ring {
+        let mut object = 0u16;
+        while object < FIELD_STAR_OBJECTS_PER_CELL {
+            let star = StarObjectIdentity {
+                cell: field_ring_identity(object_ordinal),
+                object,
+            };
+            if star_object_exists(field, star) {
+                star_object_count += 1;
+            }
+            object += 1;
+        }
+        object_ordinal += 1;
+    }
+    let catalogue_valid = first_ring < -(GRID_RINGS as i32)
+            && last_ring > GRID_RINGS as i32
+            && field_ring_s(field, field_ring_identity(first_ring)) <= field.field_start_s
+            && field_ring_s(field, field_ring_identity(first_ring + 1)) > field.field_start_s
+            && field_ring_s(field, field_ring_identity(last_ring)) >= field.field_end_s
+            && field_ring_s(field, field_ring_identity(last_ring - 1)) < field.field_end_s
+            && field_ring_s(field, field_ring_identity(first_physical_ring))
+                >= field.rings_full_s
+            && field_ring_s(field, field_ring_identity(first_physical_ring - 1))
+                < field.rings_full_s
+            && ring_object_count >= 90
+            && rail_object_count >= 6_000
+            && star_object_count >= 12_000;
+    if !catalogue_valid {
+        let mut report = [0u8; 192];
+        let pointer = report.as_mut_ptr();
+        let mut length = 0usize;
+        append(pointer, &mut length, b"phase3 universe catalogue rings/rails/stars=");
+        append_number(pointer, &mut length, ring_object_count);
+        append(pointer, &mut length, b"/");
+        append_number(pointer, &mut length, rail_object_count);
+        append(pointer, &mut length, b"/");
+        append_number(pointer, &mut length, star_object_count);
+        append(pointer, &mut length, b"\n");
+        write_all(&report[..length]);
+        exit(183)
+    }
+    let mut previous_s = field_ring_s(field, field_ring_identity(first_ring));
+    let mut region_mask = 0u32;
+    ordinal = first_ring;
+    while ordinal <= last_ring {
+        let identity = field_ring_identity(ordinal);
+        let s = field_ring_s(field, identity);
+        if ordinal > first_ring {
+            phase3_require(
+                s > previous_s,
+                183,
+                b"permanent ring order is not strictly axial",
+            );
+        }
+        region_mask |= match field_region(field, s) {
+            FieldRegion::Starfield => 1,
+            FieldRegion::Streaks => 2,
+            FieldRegion::LogarithmicRings => 4,
+            FieldRegion::CircularTunnel => 8,
+            FieldRegion::SquaringTunnel => 16,
+            FieldRegion::SquaredTunnel => 32,
+        };
+        previous_s = s;
+        ordinal += 1;
+    }
+    phase3_require(
+        region_mask == 63,
+        183,
+        b"stable ring identities do not cover every field region",
+    );
+    let downstream_spacing_1 = field_ring_s(field, field_ring_identity(2))
+        - field_ring_s(field, field_ring_identity(1));
+    let downstream_spacing_2 = field_ring_s(field, field_ring_identity(3))
+        - field_ring_s(field, field_ring_identity(2));
+    let upstream_spacing_1 = field_ring_s(field, field_ring_identity(-2))
+        - field_ring_s(field, field_ring_identity(-1));
+    let upstream_spacing_2 = field_ring_s(field, field_ring_identity(-3))
+        - field_ring_s(field, field_ring_identity(-2));
+    phase3_require(
+        (downstream_spacing_2 / downstream_spacing_1 - FIELD_RING_RATIO).abs() < 1.0e-12
+            && (upstream_spacing_2 / upstream_spacing_1 - FIELD_RING_RATIO).abs() < 1.0e-12,
+        183,
+        b"fixed axial ring spacing is not logarithmic",
+    );
+    let topology_ring = field_ring_identity(-8);
+    let next_ring_edge = FieldEdgeIdentity {
+        ring: field_ring_identity(field_ring_ordinal(topology_ring) + 1),
+        lane: 17,
+        kind: FieldEdgeKind::Circumferential,
+    };
+    let next_lane_edge = FieldEdgeIdentity {
+        ring: topology_ring,
+        lane: 18,
+        kind: FieldEdgeKind::Circumferential,
+    };
+    let axial_points = rail_object_segment(
+        field,
+        RailObjectIdentity {
+            first_ring: topology_ring,
+            lane: 17,
+        },
+    );
+    let ring_points = ring_object_segment(
+        field,
+        RingObjectIdentity { ring: topology_ring },
+        17,
+    );
+    let next_ring_points = ring_object_segment(
+        field,
+        RingObjectIdentity {
+            ring: next_ring_edge.ring,
+        },
+        17,
+    );
+    let next_lane_points = field_edge_points(field, next_lane_edge);
+    phase3_require(
+        axial_points.0 == ring_points.0
+            && axial_points.1 == next_ring_points.0
+            && ring_points.1 == next_lane_points.0,
+        183,
+        b"physical ring and rail objects do not share one stable mesh topology",
+    );
+    let exposure_start = flow_camera(3.99);
+    let exposure_end = flow_camera(4.0);
+    let mut exposure_samples = 0u32;
+    let mut exposure_motion = 0.0f32;
+    ordinal = first_ring;
+    while ordinal < first_physical_ring {
+        let mut object = 0u16;
+        while object < FIELD_STAR_OBJECTS_PER_CELL {
+            let identity = StarObjectIdentity {
+                cell: field_ring_identity(ordinal),
+                object,
+            };
+            if star_object_exists(field, identity) {
+                let fixed_point = star_object_position(field, identity);
+                phase3_require(
+                    fixed_point == star_object_position(field, identity),
+                    183,
+                    b"star identity does not retain a fixed world point",
+                );
+                if let Some((a, b)) = project_field_star_exposure(
+                    field,
+                    identity,
+                    &exposure_start,
+                    &exposure_end,
+                ) {
+                    exposure_motion = exposure_motion
+                        .max((b.0 - a.0).abs())
+                        .max((b.1 - a.1).abs());
+                    exposure_samples += 1;
+                }
+            }
+            object += 1;
+        }
+        ordinal += 1;
+    }
+    phase3_require(
+        exposure_samples >= 16 && exposure_motion > 0.000_1,
+        183,
+        b"fixed star exposure does not derive apparent flow from camera motion",
+    );
+    let horizon_camera = flow_camera(0.0);
+    let mut horizon_ring_count = 0u32;
+    let mut previous_horizon_radius = f64::MAX;
+    ordinal = first_ring;
+    while ordinal <= last_ring {
+        let ring = field_ring_identity(ordinal);
+        let s = field_ring_s(field, ring);
+        if s >= field.rings_full_s && s < field.rails_full_s {
+            let point = field_mesh_vertex(field, ring, 0);
+            let relative = dvec_sub(point, horizon_camera.position);
+            let depth = dvec_dot_vec3(relative, horizon_camera.forward);
+            if depth > horizon_camera.near_plane {
+                let center = dvec_add(field.axis_origin, dvec_scale(field.forward, s));
+                let radius = dvec_length(dvec_sub(point, center)) / depth;
+                phase3_require(
+                    radius < previous_horizon_radius,
+                    184,
+                    b"fixed logarithmic rings do not converge toward the projected horizon",
+                );
+                previous_horizon_radius = radius;
+                horizon_ring_count += 1;
+            }
+        }
+        ordinal += 1;
+    }
+    phase3_require(
+        horizon_ring_count >= 4,
+        184,
+        b"fixed field has insufficient forward rings for horizon convergence",
+    );
+    let event_times = [
+        (0.0f32, FieldRegion::Starfield),
+        (STARFIELD_HOLD, FieldRegion::Streaks),
+        (STAR_ORGANIZE, FieldRegion::LogarithmicRings),
+        (CLEAN_BIRTH, FieldRegion::CircularTunnel),
+        (GRID_SQUARE_START, FieldRegion::SquaringTunnel),
+    ];
+    let mut event_index = 0usize;
+    let mut previous_event_s = f64::NEG_INFINITY;
+    while event_index < event_times.len() {
+        let event = event_times[event_index];
+        let camera = flow_camera(event.0);
+        let camera_s = field_axis_coordinate(field.axis_origin, field.forward, camera.position);
+        phase3_require(
+            camera_s > previous_event_s && field_region(field, camera_s) == event.1,
+            185,
+            b"approved approach event no longer occurs in its fixed field region",
+        );
+        previous_event_s = camera_s;
+        event_index += 1;
+    }
+    let initial_camera = flow_camera(0.0);
+    let mut anchored_stars = 0u32;
+    let mut anchored_star_bins = 0u64;
+    ordinal = first_ring;
+    while ordinal < first_physical_ring {
+        let ring = field_ring_identity(ordinal);
+        let mut object = 0u16;
+        while object < FIELD_STAR_OBJECTS_PER_CELL {
+            let star = StarObjectIdentity { cell: ring, object };
+            let point = star_object_position(field, star);
+            phase3_require(
+                point == star_object_position(field, star),
+                185,
+                b"star object identity does not resolve to one fixed world position",
+            );
+            if star_object_exists(field, star) {
+                if let Some(projected) = project_flow_depth(&initial_camera, point) {
+                    if projected.0 >= 0.0
+                        && projected.0 < WIDTH as f32
+                        && projected.1 >= 0.0
+                        && projected.1 < HEIGHT as f32
+                    {
+                        anchored_stars += 1;
+                        let bin_x = (projected.0 * 8.0 / WIDTH as f32) as u32;
+                        let bin_y = (projected.1 * 5.0 / HEIGHT as f32) as u32;
+                        anchored_star_bins |= 1u64 << (bin_y * 8 + bin_x);
+                        }
+                    }
+            }
+            object += 1;
+        }
+        ordinal += 1;
+    }
+    if anchored_stars < 320 || anchored_star_bins.count_ones() < 24 {
+        let mut report = [0u8; 160];
+        let pointer = report.as_mut_ptr();
+        let mut length = 0usize;
+        append(pointer, &mut length, b"phase3 anchored opening stars/bins=");
+        append_number(pointer, &mut length, anchored_stars);
+        append(pointer, &mut length, b"/");
+        append_number(pointer, &mut length, anchored_star_bins.count_ones());
+        append(pointer, &mut length, b"\n");
+        write_all(&report[..length]);
+        exit(185)
+    }
+    let mut streak_axial_bins = 0u64;
+    let mut streak_axial_particles = 0u32;
+    ordinal = first_ring;
+    while ordinal < first_physical_ring {
+        let ring = field_ring_identity(ordinal);
+        let first_s = field_ring_s(field, ring);
+        let next_s = field_ring_s(field, field_ring_identity(ordinal + 1));
+        if field_region(field, first_s) == FieldRegion::Streaks {
+            let mut object = 0u16;
+            while object < FIELD_STAR_OBJECTS_PER_CELL {
+                let star = StarObjectIdentity { cell: ring, object };
+                if star_object_exists(field, star) {
+                    let point = star_object_position(field, star);
+                    let particle_s = field_axis_coordinate(
+                        field.axis_origin,
+                        field.forward,
+                        point,
+                    );
+                    let axial_amount = (particle_s - first_s) / (next_s - first_s);
+                    phase3_require(
+                        axial_amount > 0.0 && axial_amount < 1.0,
+                        185,
+                        b"independent star leaves its permanent axial cell",
+                    );
+                    let axial_bin = (axial_amount * 64.0) as u32;
+                    streak_axial_bins |= 1u64 << axial_bin.min(63);
+                    streak_axial_particles += 1;
+                }
+                object += 1;
+            }
+        }
+        ordinal += 1;
+    }
+    if streak_axial_particles < 240 || streak_axial_bins.count_ones() < 60 {
+        let mut report = [0u8; 128];
+        let pointer = report.as_mut_ptr();
+        let mut length = 0usize;
+        append(pointer, &mut length, b"phase3 independent streak particles/bins=");
+        append_number(pointer, &mut length, streak_axial_particles);
+        append(pointer, &mut length, b"/");
+        append_number(pointer, &mut length, streak_axial_bins.count_ones());
+        append(pointer, &mut length, b"\n");
+        write_all(&report[..length]);
+        exit(185)
+    }
+    let streak_camera = flow_camera(STARFIELD_HOLD);
+    let streak_past_camera = flow_camera(STARFIELD_HOLD - FIELD_MOTION_BLUR_EXPOSURE);
+    let mut anchored_streaks = 0u32;
+    let mut anchored_streak_length = 0.0f32;
+    ordinal = first_ring;
+    while ordinal < first_physical_ring {
+        let ring = field_ring_identity(ordinal);
+        let s = field_ring_s(field, ring);
+        if field_region(field, s) == FieldRegion::Streaks {
+            let mut object = 0u16;
+            while object < FIELD_STAR_OBJECTS_PER_CELL {
+                let star = StarObjectIdentity { cell: ring, object };
+                if star_object_exists(field, star) {
+                    let point = star_object_position(field, star);
+                    if let (Some(before), Some(after)) = (
+                        project_flow_depth(&streak_past_camera, point),
+                        project_flow_depth(&streak_camera, point),
+                    ) {
+                        if after.0 >= 0.0
+                            && after.0 < WIDTH as f32
+                            && after.1 >= 0.0
+                            && after.1 < HEIGHT as f32
+                        {
+                            anchored_streaks += 1;
+                            anchored_streak_length = anchored_streak_length.max(
+                                fast_sqrt(
+                                    (after.0 - before.0) * (after.0 - before.0)
+                                        + (after.1 - before.1) * (after.1 - before.1),
+                                ),
+                            );
+                        }
+                    }
+                }
+                object += 1;
+            }
+        }
+        ordinal += 1;
+    }
+    phase3_require(
+        anchored_streaks >= 64 && anchored_streak_length >= 0.25,
+        185,
+        b"anchored streak space loses its event or perceptible camera motion",
+    );
+    let hold_camera = flow_camera(STARFIELD_HOLD);
+    let mut premature_mesh_visibility = 0.0f32;
+    ordinal = first_ring;
+    while ordinal <= last_ring {
+        let ring = field_ring_identity(ordinal);
+        let s = field_ring_s(field, ring);
+        if field_region(field, s) != FieldRegion::Starfield
+            && field_region(field, s) != FieldRegion::Streaks
+        {
+            premature_mesh_visibility = premature_mesh_visibility
+                .max(field_mesh_visibility(field, s, &initial_camera))
+                .max(field_mesh_visibility(field, s, &hold_camera));
+        }
+        ordinal += 1;
+    }
+    phase3_require(
+        premature_mesh_visibility == 0.0,
+        185,
+        b"future mesh is visible from the opening star/streak spaces",
+    );
+    let rendered_event_spaces = [
+        (STAR_ORGANIZE, FieldRegion::LogarithmicRings),
+        (CLEAN_BIRTH, FieldRegion::CircularTunnel),
+        (GRID_SQUARE_START, FieldRegion::SquaringTunnel),
+    ];
+    event_index = 0;
+    while event_index < rendered_event_spaces.len() {
+        let event = rendered_event_spaces[event_index];
+        let camera = flow_camera(event.0);
+        let camera_s = field_axis_coordinate(field.axis_origin, field.forward, camera.position);
+        let mut visible_edges = 0u32;
+        let mut visible_edge_bins = 0u64;
+        ordinal = first_ring;
+        while ordinal <= last_ring {
+            let ring = field_ring_identity(ordinal);
+            let s = field_ring_s(field, ring);
+            if s > camera_s
+                && field_region(field, s) == event.1
+                && field_mesh_visibility(field, s, &camera) > 0.01
+            {
+                let mut lane = 0usize;
+                while lane < GRID_LANES - 1 {
+                    let edge = FieldEdgeIdentity {
+                        ring,
+                        lane: lane as u16,
+                        kind: FieldEdgeKind::Circumferential,
+                    };
+                    let points = field_edge_points(field, edge);
+                    if let Some((a, b)) =
+                        project_field_segment(points.0, points.1, &camera, 1.0)
+                    {
+                        if !((a.0 < 0.0 && b.0 < 0.0)
+                            || (a.0 >= WIDTH as f32 && b.0 >= WIDTH as f32)
+                            || (a.1 < 0.0 && b.1 < 0.0)
+                            || (a.1 >= HEIGHT as f32 && b.1 >= HEIGHT as f32))
+                        {
+                            visible_edges += 1;
+                            let middle_x =
+                                ((a.0 + b.0) * 0.5).clamp(0.0, WIDTH as f32 - 1.0);
+                            let middle_y =
+                                ((a.1 + b.1) * 0.5).clamp(0.0, HEIGHT as f32 - 1.0);
+                            let bin_x = (middle_x * 8.0 / WIDTH as f32) as u32;
+                            let bin_y = (middle_y * 5.0 / HEIGHT as f32) as u32;
+                            visible_edge_bins |= 1u64 << (bin_y * 8 + bin_x);
+                        }
+                    }
+                    lane += 1;
+                }
+            }
+            ordinal += 1;
+        }
+        phase3_require(
+            visible_edges >= 8 && visible_edge_bins.count_ones() >= 4,
+            185,
+            b"anchored ring/tunnel key space is absent or collapsed",
+        );
+        event_index += 1;
+    }
+    let planet_intro_bounds = projected_surface_bounds(&flow_camera(PLANET_INTRO), 1.0);
+    phase3_require(
+        planet_intro_bounds.visible > 0.0
+            && planet_intro_bounds.x >= 0.0
+            && planet_intro_bounds.x < WIDTH as f32
+            && planet_intro_bounds.y >= 0.0
+            && planet_intro_bounds.y < HEIGHT as f32,
+        185,
+        b"planet introduction is absent from the unified world view",
+    );
+    let mut fixed_star_candidates = 0u32;
+    let mut inconsistent_fixed_stars = 0u32;
+    let mut fixed_star_max_error = 0.0f32;
+    let mut moving_star_identities = 0u32;
+    let mut proof_tick = 0u32;
+    while proof_tick <= 10_500 {
+        let first_time = proof_tick as f32 / 1_000.0;
+        let middle_time = first_time + 0.25;
+        let last_time = first_time + 0.5;
+        let first_camera = flow_camera(first_time);
+        let middle_camera = flow_camera(middle_time);
+        let last_camera = flow_camera(last_time);
+        let mut proof_index = 0usize;
+        while proof_index < STAR_LINES {
+            let generation = canonical_star_generation(proof_index, first_time, CLEAN_BIRTH);
+            if generation == canonical_star_generation(proof_index, middle_time, CLEAN_BIRTH)
+                && generation == canonical_star_generation(proof_index, last_time, CLEAN_BIRTH)
+            {
+                let first = canonical_flyby_segment(proof_index, first_time, CLEAN_BIRTH);
+                let middle = canonical_flyby_segment(proof_index, middle_time, CLEAN_BIRTH);
+                let last = canonical_flyby_segment(proof_index, last_time, CLEAN_BIRTH);
+                if let (
+                    Some((first_a, first_b)),
+                    Some((middle_a, middle_b)),
+                    Some((last_a, last_b)),
+                ) = (first, middle, last)
+                {
+                    let first_center = (
+                        (first_a.0 + first_b.0) * 0.5,
+                        (first_a.1 + first_b.1) * 0.5,
+                    );
+                    let middle_center = (
+                        (middle_a.0 + middle_b.0) * 0.5,
+                        (middle_a.1 + middle_b.1) * 0.5,
+                    );
+                    let last_center = (
+                        (last_a.0 + last_b.0) * 0.5,
+                        (last_a.1 + last_b.1) * 0.5,
+                    );
+                    if let Some(candidate) = fixed_candidate_from_rays(
+                        &first_camera,
+                        first_center,
+                        &last_camera,
+                        last_center,
+                    ) {
+                        let endpoint_error = projected_point_error(
+                            &first_camera,
+                            candidate,
+                            first_center,
+                        )
+                        .max(projected_point_error(
+                            &last_camera,
+                            candidate,
+                            last_center,
+                        ));
+                        if endpoint_error <= 0.000_1 {
+                            let error =
+                                projected_point_error(&middle_camera, candidate, middle_center);
+                            fixed_star_max_error = fixed_star_max_error.max(error);
+                            if error > 0.000_1 {
+                                inconsistent_fixed_stars += 1;
+                            }
+                            fixed_star_candidates += 1;
+                        }
+                    }
+                    let identity = CanonicalStarParticleIdentity {
+                        line: proof_index,
+                        generation,
+                    };
+                    if let (Some(first_world), Some(last_world)) = (
+                        canonical_star_particle_world_position(field, identity, first_time),
+                        canonical_star_particle_world_position(field, identity, last_time),
+                    ) {
+                        if dvec_length(dvec_sub(last_world, first_world)) > 1.0e-8 {
+                            moving_star_identities += 1;
+                        }
+                    }
+                }
+            }
+            proof_index += 1;
+        }
+        proof_tick += 250;
+    }
+    phase3_require(
+        fixed_star_candidates >= 10_000
+            && inconsistent_fixed_stars >= 1_000
+            && fixed_star_max_error > 0.01
+            && moving_star_identities >= 1_000,
+        184,
+        b"canonical star rays do not distinguish fixed points from moving particles",
+    );
+    let mut fixed_mesh_candidates = 0u32;
+    let mut inconsistent_fixed_mesh = 0u32;
+    let mut fixed_mesh_max_error = 0.0f32;
+    let mut proof_ring = 0usize;
+    while proof_ring < 12 {
+        let first_time = ring_birth(proof_ring) + 0.1;
+        let middle_time = first_time + 0.35;
+        let last_time = first_time + 0.7;
+        let first_camera = flow_camera(first_time);
+        let middle_camera = flow_camera(middle_time);
+        let last_camera = flow_camera(last_time);
+        let first_state = ring_state(proof_ring, first_time);
+        let middle_state = ring_state(proof_ring, middle_time);
+        let last_state = ring_state(proof_ring, last_time);
+        if first_state.1.to_bits() == middle_state.1.to_bits()
+            && first_state.1.to_bits() == last_state.1.to_bits()
+        {
+            let shape = birth_shape(first_state.1);
+            let mut lane = 0usize;
+            while lane < GRID_LANES {
+                let lane_coordinate =
+                    -14.0 + lane as f32 * (28.0 / (GRID_LANES - 1) as f32);
+                let section = grid_section_point(lane_coordinate, shape);
+                let screen_point = |depth: f32| {
+                    let amount = depth / 20.0;
+                    let radius = amount * amount * 260.0;
+                    (160.0 + section.0 * radius, 100.0 + section.1 * radius)
+                };
+                let first_point = screen_point(first_state.0);
+                let middle_point = screen_point(middle_state.0);
+                let last_point = screen_point(last_state.0);
+                if let Some(candidate) = fixed_candidate_from_rays(
+                    &first_camera,
+                    first_point,
+                    &last_camera,
+                    last_point,
+                ) {
+                    let endpoint_error = projected_point_error(
+                        &first_camera,
+                        candidate,
+                        first_point,
+                    )
+                    .max(projected_point_error(&last_camera, candidate, last_point));
+                    if endpoint_error <= 0.000_1 {
+                        let error =
+                            projected_point_error(&middle_camera, candidate, middle_point);
+                        fixed_mesh_max_error = fixed_mesh_max_error.max(error);
+                        if error > 0.000_1 {
+                            inconsistent_fixed_mesh += 1;
+                        }
+                        fixed_mesh_candidates += 1;
+                    }
+                }
+                lane += 1;
+            }
+        }
+        proof_ring += 1;
+    }
+    phase3_require(
+        fixed_mesh_candidates >= 500
+            && inconsistent_fixed_mesh >= 100
+            && fixed_mesh_max_error > 0.01,
+        184,
+        b"canonical mesh rays do not expose ring-age world motion",
+    );
     let samples = [
         0.5f32, 4.0, 11.0, 20.063, 27.0, 27.99, 28.0, 28.01, 35.0,
         42.0, 51.959_26, 60.0, 78.0, 94.0, 106.0, 122.0, 137.0,
@@ -1842,12 +3282,12 @@ fn run_phase3_unified_camera_audit() -> ! {
     );
     let mut visible_stars = 0usize;
     let mut occupied_star_bins = 0u64;
-    let start_transport = flow_field_transport(0.0);
+    let start_transport = canonical_flow_field_transport(0.0);
     index = 0;
     while index < STAR_LINES {
         if let Some((a, b, depth)) = flyby_segment(index, 0.0, CLEAN_BIRTH) {
             if let Some((projected_a, projected_b)) =
-                project_flow_star_segment(
+                project_canonical_flow_star_segment(
                     start_transport,
                     a,
                     b,
@@ -1890,10 +3330,23 @@ fn run_phase3_unified_camera_audit() -> ! {
     let mut canonical_tick = 0u32;
     let mut canonical_max_error = 0.0f32;
     let mut canonical_active_samples = 0u32;
+    let mut explicit_particle_max_error = 0.0f32;
+    let mut exact_exposure_max_error = 0.0f32;
+    let mut explicit_particle_samples = 0u32;
+    let mut exact_exposure_samples = 0u32;
+    let mut nonphysical_streak_samples = 0u32;
     while canonical_tick <= 11 * TRAJECTORY_HZ as u32 {
         let time = canonical_tick as f32 / TRAJECTORY_HZ as f32;
         let camera = flow_camera(time);
-        let transport = flow_field_transport(time);
+        let transport = canonical_flow_field_transport(time);
+        phase3_require(
+            dvec_length(dvec_sub(
+                canonical_star_particle_reference(field, time),
+                camera.position,
+            )) < 1.0e-9,
+            184,
+            b"explicit star trajectory reference diverges from canonical approach",
+        );
         index = 0;
         while index < STAR_LINES {
             let generated = flyby_segment(index, time, CLEAN_BIRTH);
@@ -1902,7 +3355,14 @@ fn run_phase3_unified_camera_audit() -> ! {
                 (None, None) => {}
                 (Some((a, b, moving_row)), Some((canonical_a, canonical_b))) => {
                     let Some((pa, pb)) =
-                        project_flow_star_segment(transport, a, b, moving_row, &camera, 1.0)
+                        project_canonical_flow_star_segment(
+                            transport,
+                            a,
+                            b,
+                            moving_row,
+                            &camera,
+                            1.0,
+                        )
                     else {
                         phase3_fail(181, b"canonical star was lost during world projection")
                     };
@@ -1912,6 +3372,76 @@ fn run_phase3_unified_camera_audit() -> ! {
                         .max((pb.0 - canonical_b.0).abs())
                         .max((pb.1 - canonical_b.1).abs());
                     canonical_active_samples += 1;
+                    let generation = canonical_star_generation(index, time, CLEAN_BIRTH);
+                    let identity = CanonicalStarParticleIdentity {
+                        line: index,
+                        generation,
+                    };
+                    let center_world = canonical_star_particle_world_position(
+                        field,
+                        identity,
+                        time,
+                    )
+                    .unwrap_or_else(|| {
+                        phase3_fail(184, b"explicit canonical star identity was lost")
+                    });
+                    let canonical_center = (
+                        (canonical_a.0 + canonical_b.0) * 0.5,
+                        (canonical_a.1 + canonical_b.1) * 0.5,
+                    );
+                    explicit_particle_max_error = explicit_particle_max_error
+                        .max(projected_point_error(&camera, center_world, canonical_center));
+                    explicit_particle_samples += 1;
+                    if time >= 7.0 {
+                        if let Some((exposure_start, exposure_end)) =
+                            canonical_star_exposure_times(identity, time)
+                        {
+                            let first_world = canonical_star_particle_world_position(
+                                field,
+                                identity,
+                                exposure_start,
+                            )
+                            .unwrap_or_else(|| {
+                                phase3_fail(
+                                    184,
+                                    b"canonical streak lost its first particle sample",
+                                )
+                            });
+                            let second_world = canonical_star_particle_world_position(
+                                field,
+                                identity,
+                                exposure_end,
+                            )
+                            .unwrap_or_else(|| {
+                                phase3_fail(
+                                    184,
+                                    b"canonical streak lost its last particle sample",
+                                )
+                            });
+                            let first_camera = flow_camera(exposure_start);
+                            let second_camera = flow_camera(exposure_end);
+                            let exposure_error = 0.0f32
+                                .max(projected_point_error(
+                                    &first_camera,
+                                    first_world,
+                                    canonical_a,
+                                ))
+                                .max(projected_point_error(
+                                    &second_camera,
+                                    second_world,
+                                    canonical_b,
+                                ));
+                            if exposure_error <= 0.000_1 {
+                                exact_exposure_max_error =
+                                    exact_exposure_max_error.max(exposure_error);
+                                exact_exposure_samples += 1;
+                            } else {
+                                nonphysical_streak_samples += 1;
+                            }
+                        } else {
+                            nonphysical_streak_samples += 1;
+                        }
+                    }
                 }
                 _ => phase3_fail(181, b"canonical star activation identity changed"),
             }
@@ -1924,6 +3454,38 @@ fn run_phase3_unified_camera_audit() -> ! {
         181,
         b"world projection does not exactly reproduce canonical star motion",
     );
+    if !(explicit_particle_samples >= 1_000_000
+        && exact_exposure_samples >= 100_000
+        && nonphysical_streak_samples >= 1_000
+        && explicit_particle_max_error > 0.000_1
+        && explicit_particle_max_error <= 0.01
+        && exact_exposure_max_error <= 0.000_1)
+    {
+        let mut report = [0u8; 256];
+        let pointer = report.as_mut_ptr();
+        let mut length = 0usize;
+        append(pointer, &mut length, b"phase3 star proof failed center/exposure/nonphysical/center-error/exposure-error-micropixels=");
+        append_number(pointer, &mut length, explicit_particle_samples);
+        append(pointer, &mut length, b"/");
+        append_number(pointer, &mut length, exact_exposure_samples);
+        append(pointer, &mut length, b"/");
+        append_number(pointer, &mut length, nonphysical_streak_samples);
+        append(pointer, &mut length, b"/");
+        append_number(
+            pointer,
+            &mut length,
+            (explicit_particle_max_error * 1_000_000.0) as u32,
+        );
+        append(pointer, &mut length, b"/");
+        append_number(
+            pointer,
+            &mut length,
+            (exact_exposure_max_error * 1_000_000.0) as u32,
+        );
+        append(pointer, &mut length, b"\n");
+        write_all(&report[..length]);
+        exit(184)
+    }
     let mut mesh_tick = (RING_BIRTH * TRAJECTORY_HZ as f32) as u32;
     let mesh_end_tick = (CLEAN_BIRTH * TRAJECTORY_HZ as f32) as u32;
     let mut canonical_mesh_samples = 0u32;
@@ -1944,7 +3506,7 @@ fn run_phase3_unified_camera_audit() -> ! {
                             + lane_index as f32 * (28.0 / (GRID_LANES - 1) as f32);
                         let section = grid_section_point(lane, shape);
                         if section.1 / 0.61 <= 0.25 {
-                            let point = flow_grid_world_point(time, section, depth);
+                            let point = canonical_flow_grid_world_point(time, section, depth);
                             let projected = project_flow_depth(&camera, point).unwrap_or_else(|| {
                                 phase3_fail(181, b"canonical forming mesh left the forward field")
                             });
@@ -1972,7 +3534,7 @@ fn run_phase3_unified_camera_audit() -> ! {
         let tick = star_tick;
         let time = tick as f32 / 1_000.0;
         let camera = flow_camera(time);
-        let transport = flow_field_transport(time);
+        let transport = canonical_flow_field_transport(time);
         let mut projected_count = 0u32;
         let mut visible_count = 0u32;
         let mut visible_bins = 0u64;
@@ -1986,7 +3548,14 @@ fn run_phase3_unified_camera_audit() -> ! {
         while index < STAR_LINES {
             if let Some((a, b, depth)) = flyby_segment(index, time, CLEAN_BIRTH) {
                 if let Some((pa, pb)) =
-                    project_flow_star_segment(transport, a, b, depth, &camera, 1.0)
+                    project_canonical_flow_star_segment(
+                        transport,
+                        a,
+                        b,
+                        depth,
+                        &camera,
+                        1.0,
+                    )
                 {
                     let point_error = (pa.0 - (160.0 + a.0))
                         .abs()
@@ -2104,7 +3673,15 @@ fn run_phase3_unified_camera_audit() -> ! {
                 let a = grid_section_point(lane_a, shape);
                 let b = grid_section_point(lane_b, shape);
                 if let Some((pa, pb)) =
-                    project_flow_grid_segment(time, a, depth, b, depth, &camera, 1.0)
+                    project_canonical_flow_grid_segment(
+                        time,
+                        a,
+                        depth,
+                        b,
+                        depth,
+                        &camera,
+                        1.0,
+                    )
                 {
                     let x = (pa.0 + pb.0) * 0.5;
                     let y = (pa.1 + pb.1) * 0.5;
@@ -2184,12 +3761,12 @@ fn run_phase3_unified_camera_audit() -> ! {
     let mut embed_index = 0usize;
     while embed_index < embed_times.len() {
         let time = embed_times[embed_index];
-        let transport = flow_particle_transport(time);
+        let transport = canonical_flow_field_transport(time);
         let planet_depth = dvec_dot(dvec_sub(PLANET_CENTER, transport), field_forward);
         let projective_radius = FLOW_FOCAL as f64 * SECTION_SCALE / planet_depth;
         let depth = (20.0 * sqrt_f64(projective_radius / 260.0)) as f32;
         let bottom = grid_section_point(-7.0, fixed_shape);
-        let plate_point = flow_grid_world_point(time, bottom, depth);
+        let plate_point = canonical_flow_grid_world_point(time, bottom, depth);
         phase3_require(
             dvec_length(dvec_sub(plate_point, PLANET_CENTER)) < 1.0e-4,
             179,
@@ -2199,8 +3776,9 @@ fn run_phase3_unified_camera_audit() -> ! {
     }
     let extent_time = 27.0f32;
     let extent_bottom = grid_section_point(-7.0, fixed_shape);
-    let far_point = flow_grid_world_point(extent_time, extent_bottom, GRID_FOG_START);
-    let near_point = flow_grid_world_point(extent_time, extent_bottom, 24.0);
+    let far_point =
+        canonical_flow_grid_world_point(extent_time, extent_bottom, GRID_FOG_START);
+    let near_point = canonical_flow_grid_world_point(extent_time, extent_bottom, 24.0);
     phase3_require(
         dvec_dot(dvec_sub(far_point, PLANET_CENTER), field_forward)
             > GRID_WELL_RADIUS_WORLD
@@ -2210,9 +3788,9 @@ fn run_phase3_unified_camera_audit() -> ! {
         b"mesh does not extend continuously from the horizon past the planet",
     );
     let transport_step = 1.0f32 / TRAJECTORY_HZ as f32;
-    let transport_before = flow_field_transport(ORBIT_ENTRY - transport_step);
-    let transport_entry = flow_field_transport(ORBIT_ENTRY);
-    let transport_after = flow_field_transport(ORBIT_ENTRY + transport_step);
+    let transport_before = canonical_flow_field_transport(ORBIT_ENTRY - transport_step);
+    let transport_entry = canonical_flow_field_transport(ORBIT_ENTRY);
+    let transport_after = canonical_flow_field_transport(ORBIT_ENTRY + transport_step);
     let velocity_before = dvec_scale(
         dvec_sub(transport_entry, transport_before),
         1.0 / transport_step as f64,
@@ -2221,7 +3799,7 @@ fn run_phase3_unified_camera_audit() -> ! {
         dvec_sub(transport_after, transport_entry),
         1.0 / transport_step as f64,
     );
-    let post_capture_transport = flow_field_transport(29.0);
+    let post_capture_transport = canonical_flow_field_transport(29.0);
     phase3_require(
         dvec_length(dvec_sub(velocity_before, velocity_after)) < 0.1
             && dvec_dot(
@@ -2240,7 +3818,7 @@ fn run_phase3_unified_camera_audit() -> ! {
     let mut flow_index = 0usize;
     while flow_index < flow_depths.len() {
         let depth = flow_depths[flow_index];
-        let point = flow_grid_world_point(extent_time, top, depth);
+        let point = canonical_flow_grid_world_point(extent_time, top, depth);
         let projected = project_flow_depth(&extent_camera, point)
             .unwrap_or_else(|| phase3_fail(179, b"mesh flow leaves the forward world field"));
         let dx = projected.0 - 160.0;
@@ -2255,7 +3833,7 @@ fn run_phase3_unified_camera_audit() -> ! {
         flow_index += 1;
     }
     write_all(
-        b"phase3 unified-camera audit ok: geometry=one-world grid=horizon-flow/past-planet bottom-plate=planet-equator camera=trajectory projection=output-only seek=stable\n",
+        b"phase3 unified-camera audit ok: universe=fixed-flight-independent objects=>12000stars/>6000rails/>90rings renderer=no-regions/no-handoff rings=physical motion-blur=32ms/camera-only axial-bins=>=60/64 identities=independent planet=fixed projection=output-only seek=stable\n",
     );
     exit(0)
 }
@@ -2819,9 +4397,24 @@ fn phase6_require(condition: bool, code: usize, message: &[u8]) {
 #[cfg(feature = "phase0-audit")]
 fn run_phase6_atmosphere_audit() -> ! {
     let above = flow_camera(FLOW_DESCENT_START as f32);
-    let entry = flow_camera(78.0);
+    let mut entry_time = FLOW_DESCENT_START as f32;
+    let mut entry = above;
+    let mut found_entry = false;
+    while entry_time < FLOW_ORBIT_THREE_END as f32 {
+        let candidate = flow_camera(entry_time);
+        let density = flow_atmosphere_amount(&candidate);
+        if density > 0.05 && density < 0.95 && flow_entry_heat(&candidate) > 0.0 {
+            entry = candidate;
+            found_entry = true;
+            break;
+        }
+        entry_time += 0.05;
+    }
     phase6_require(
-        flow_atmosphere_amount(&above) == 0.0 && flow_atmosphere_amount(&entry) > 0.0,
+        found_entry
+            && flow_atmosphere_amount(&above) == 0.0
+            && flow_atmosphere_amount(&entry) > 0.0
+            && flow_atmosphere_amount(&entry) < 1.0,
         220,
         b"atmospheric density does not follow physical altitude",
     );
@@ -2867,7 +4460,8 @@ fn run_phase6_atmosphere_audit() -> ! {
         b"grid geometry does not expose depth to atmospheric attenuation",
     );
     clear_depth_buffer();
-    render_continuous_grid(78.0, &entry, 1.0);
+    let entry_exposure_start = flow_camera(entry_time - FIELD_MOTION_BLUR_EXPOSURE);
+    render_universe_field(&entry_exposure_start, &entry, 1.0);
     let grid_depth = core::ptr::addr_of!(DEPTH).cast::<f32>();
     let mut grid_samples = 0usize;
     let mut optically_attenuated = 0usize;
@@ -2918,6 +4512,25 @@ fn run_phase6_atmosphere_audit() -> ! {
         229,
         b"rendered atmospheric-entry grid does not exercise optical attenuation",
     );
+    let airplane_pass = flow_camera(78.0);
+    phase6_require(
+        universe_space_visibility(&airplane_pass) == 0.0,
+        229,
+        b"space field remains materially visible at the 30000-foot airplane pass",
+    );
+    clear_depth_buffer();
+    let airplane_exposure_start = flow_camera(78.0 - FIELD_MOTION_BLUR_EXPOSURE);
+    render_universe_field(&airplane_exposure_start, &airplane_pass, 1.0);
+    let extinguished_depth = core::ptr::addr_of!(DEPTH).cast::<f32>();
+    let mut extinguished_pixel = 0usize;
+    while extinguished_pixel < PIXELS {
+        phase6_require(
+            unsafe { extinguished_depth.add(extinguished_pixel).read() } == f32::MAX,
+            229,
+            b"extinguished extraterrestrial field still writes depth at 30000 feet",
+        );
+        extinguished_pixel += 1;
+    }
     clear_depth_buffer();
     let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
     put_pixel(frame, 40, 40, 20, 30, 40);
@@ -2933,11 +4546,11 @@ fn run_phase6_atmosphere_audit() -> ! {
         b"infinite-distance sun overwrites foreground world geometry",
     );
 
-    let valley_sun_times = [106.0f32, 113.0, 122.0, 137.0];
+    let airplane_sun_times = [60.0f32, 70.0, 80.0, 90.0];
     let mut sun_index = 0usize;
     let mut exposed_sun_views = 0usize;
-    while sun_index < valley_sun_times.len() {
-        let time = valley_sun_times[sun_index];
+    while sun_index < airplane_sun_times.len() {
+        let time = airplane_sun_times[sun_index];
         let camera = flow_camera(time);
         if let Some(projection) = flow_sun_projection(&camera, 1.0) {
             if projection.0 >= -14.0
@@ -2946,7 +4559,8 @@ fn run_phase6_atmosphere_audit() -> ! {
                 && projection.1 < HEIGHT as f32 + 14.0
             {
                 clear_depth_buffer();
-                render_continuous_grid(time, &camera, 1.0);
+                let exposure_start = flow_camera(time - FIELD_MOTION_BLUR_EXPOSURE);
+                render_universe_field(&exposure_start, &camera, 1.0);
                 render_flow_surface(&camera, time, 1.0);
                 let depth = core::ptr::addr_of!(DEPTH).cast::<f32>();
                 let center_x = projection.0 as i32;
@@ -2979,22 +4593,22 @@ fn run_phase6_atmosphere_audit() -> ! {
         }
         sun_index += 1;
     }
-    if exposed_sun_views != valley_sun_times.len() {
+    if exposed_sun_views != airplane_sun_times.len() {
         let mut report = [0u8; 256];
         let report_pointer = report.as_mut_ptr();
         let mut report_length = 0usize;
         let sun = flow_sun_direction();
         sun_index = 0;
-        append(report_pointer, &mut report_length, b"phase6 atmosphere audit failed: valley sun exposure ");
+        append(report_pointer, &mut report_length, b"phase6 atmosphere audit failed: airplane-pass sun exposure ");
         append_number(report_pointer, &mut report_length, exposed_sun_views as u32);
         append(report_pointer, &mut report_length, b"/4 camera coordinates");
-        while sun_index < valley_sun_times.len() {
-            let camera = flow_camera(valley_sun_times[sun_index]);
+        while sun_index < airplane_sun_times.len() {
+            let camera = flow_camera(airplane_sun_times[sun_index]);
             append(report_pointer, &mut report_length, b" t=");
             append_number(
                 report_pointer,
                 &mut report_length,
-                valley_sun_times[sun_index] as u32,
+                airplane_sun_times[sun_index] as u32,
             );
             append(report_pointer, &mut report_length, b" r/d/f+2000=");
             append_number(
@@ -3036,7 +4650,7 @@ fn run_phase6_atmosphere_audit() -> ! {
         b"combined surface and atmosphere frame exceeds 33.3 ms",
     );
     write_all(
-        b"phase6 atmosphere audit ok: shell=shared optical-depth=ray/grid plasma=density*speed clouds=anchored sun=fixed/exposed-valley frame<=33.3ms\n",
+        b"phase6 atmosphere audit ok: shell=shared optical-depth=ray/grid field=extinguished-by-30000ft plasma=density*speed clouds=anchored sun=fixed/exposed-valley frame<=33.3ms\n",
     );
     exit(0)
 }
@@ -3136,18 +4750,48 @@ fn run_phase7_hardening_audit() -> ! {
         FLOW_PATH_END as f32,
     ];
     let mut maximum_frame_ns = 0u64;
+    let mut slowest_checkpoint = 0usize;
     index = 0;
     while index < performance_checkpoints.len() {
         let started = process_cpu_ns();
         render_demo(performance_checkpoints[index], 1.0);
-        maximum_frame_ns = maximum_frame_ns.max(process_cpu_ns().saturating_sub(started));
+        let frame_ns = process_cpu_ns().saturating_sub(started);
+        if frame_ns > maximum_frame_ns {
+            maximum_frame_ns = frame_ns;
+            slowest_checkpoint = index;
+        }
         index += 1;
     }
-    phase7_require(
-        maximum_frame_ns <= 33_333_334,
-        232,
-        b"a required timeline checkpoint exceeds the 33.3-ms hard maximum",
-    );
+    if maximum_frame_ns > 33_333_334 {
+        let mut report = [0u8; 192];
+        let report_pointer = report.as_mut_ptr();
+        let mut report_length = 0usize;
+        append(
+            report_pointer,
+            &mut report_length,
+            b"phase7 hardening audit failed: frame budget checkpoint-index=",
+        );
+        append_number(
+            report_pointer,
+            &mut report_length,
+            slowest_checkpoint as u32,
+        );
+        append(report_pointer, &mut report_length, b" time-ms-x1000=");
+        append_number(
+            report_pointer,
+            &mut report_length,
+            (performance_checkpoints[slowest_checkpoint] * 1_000.0) as u32,
+        );
+        append(report_pointer, &mut report_length, b" frame-ns=");
+        append_number(
+            report_pointer,
+            &mut report_length,
+            maximum_frame_ns.min(u32::MAX as u64) as u32,
+        );
+        append(report_pointer, &mut report_length, b" maximum=33333334\n");
+        write_all(&report[..report_length]);
+        exit(232)
+    }
     write_all(
         b"phase7 hardening audit ok: legacy=absent surface-lod=continuous seek=frame-deterministic controls=phase0 performance=all-checkpoints\n",
     );
@@ -3231,6 +4875,7 @@ fn smootherstep(value: f32) -> f32 {
     value * value * value * (value * (value * 6.0 - 15.0) + 10.0)
 }
 
+#[cfg(feature = "phase0-audit")]
 fn grid_fog_range(time: f32) -> (f32, f32) {
     let distant_detail = smoothstep((time - (PLANET_INTRO - 1.0)) / 2.0);
     (
@@ -4266,6 +5911,7 @@ fn draw_entry_sheath(camera: &FlowCamera, intensity: f32) {
 }
 
 fn flow_sun_direction() -> Vec3 {
+    let sun_direction = universe().sun_direction;
     let legacy_forward = Vec3 {
         x: 0.0,
         y: sine_sample(262.0),
@@ -4277,9 +5923,9 @@ fn flow_sun_direction() -> Vec3 {
         z: sine_sample(262.0),
     };
     vec3_from_dvec(dvec_normalize(dvec_from_vec3(Vec3 {
-        x: SUN_DIRECTION.x,
-        y: -vec_dot(SUN_DIRECTION, legacy_up),
-        z: vec_dot(SUN_DIRECTION, legacy_forward),
+        x: sun_direction.x,
+        y: -vec_dot(sun_direction, legacy_up),
+        z: vec_dot(sun_direction, legacy_forward),
     })))
 }
 
@@ -4306,6 +5952,10 @@ fn flow_atmosphere_amount(camera: &FlowCamera) -> f32 {
     smootherstep_f64((100.0 - altitude_km) / 82.0) as f32
 }
 
+fn universe_space_visibility(camera: &FlowCamera) -> f32 {
+    1.0 - flow_atmosphere_amount(camera)
+}
+
 fn flow_entry_heat(camera: &FlowCamera) -> f32 {
     let altitude_km = camera.altitude_miles * METERS_PER_MILE / 1_000.0;
     let density_window = smootherstep_f64((100.0 - altitude_km) / 55.0)
@@ -4325,10 +5975,11 @@ fn atmosphere_ray_segment(
     // Atmospheric integration begins at the camera, not at the geometry near
     // plane.  During low flight the remaining shell above the camera is much
     // thinner than the near clip distance.
-    let local = dvec_sub(camera.position, PLANET_CENTER);
+    let universe = universe();
+    let local = dvec_sub(camera.position, universe.planet_center);
     let b = dvec_dot(local, direction);
     let c = dvec_dot(local, local)
-        - FLOW_ATMOSPHERE_RADIUS_WORLD * FLOW_ATMOSPHERE_RADIUS_WORLD;
+        - universe.atmosphere_radius * universe.atmosphere_radius;
     let discriminant = b * b - c;
     if discriminant < 0.0 {
         return None;
@@ -4455,43 +6106,26 @@ fn render_world_journey(
     draw_entry_sheath(flow, flow_entry_heat(flow));
 }
 
-fn star_space_color(direction: DVec3) -> (u8, u8, u8) {
-    let sample_x = (direction.x * 1_024.0) as i32;
-    let sample_y = (direction.y * 1_024.0) as i32;
-    let sample_z = (direction.z * 1_024.0) as i32;
-    let vertical = direction.y.abs() as f32;
-    let horizontal = direction.x.abs() as f32;
-    let diagonal = direction.y as f32 + direction.x as f32 * 0.19 + sine(sample_z * 2) * 0.11;
-    let band = (1.0 - diagonal.abs() / 0.78).clamp(0.0, 1.0);
-    let cloud = sine(sample_x * 3 + sample_y * 2 + 117)
-        + sine(sample_x + sample_y * 5 + 631) * 0.52
-        + sine(sample_z * 7 - sample_y * 3 + 349) * 0.24;
-    let dust = (band * band * (0.64 + cloud * 0.22)).max(0.0);
-    let vignette = (1.0 - horizontal * 0.31 - vertical * 0.24).clamp(0.42, 1.0);
-    (
-        ((2.0 + dust * 15.0) * vignette) as u8,
-        ((3.0 + dust * (10.0 + band * 4.0)) * vignette) as u8,
-        ((12.0 + dust * 29.0) * vignette) as u8,
-    )
+fn fill_universe_vacuum() {
+    let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
+    let mut pixel = 0usize;
+    while pixel < PIXELS {
+        unsafe {
+            frame.add(pixel * 3).write(2);
+            frame.add(pixel * 3 + 1).write(3);
+            frame.add(pixel * 3 + 2).write(12);
+        }
+        pixel += 1;
+    }
 }
 
-fn fill_star_space(camera: &FlowCamera, x_scale: f32) {
-    let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
-    let mut y = 0usize;
-    while y < HEIGHT {
-        let mut x = 0usize;
-        while x < WIDTH {
-            let direction = flow_camera_ray(
-                camera,
-                x_scale,
-                x as f32 + 0.5,
-                y as f32 + 0.5,
-            );
-            let (r, g, b) = star_space_color(direction);
-            put_pixel(frame, x, y, r, g, b);
-            x += 1;
-        }
-        y += 1;
+#[cfg(feature = "phase0-audit")]
+fn put_pixel(frame: *mut u8, x: usize, y: usize, r: u8, g: u8, b: u8) {
+    let offset = (y * WIDTH + x) * 3;
+    unsafe {
+        frame.add(offset).write(r);
+        frame.add(offset + 1).write(g);
+        frame.add(offset + 2).write(b);
     }
 }
 
@@ -4523,12 +6157,7 @@ fn mesh_accent(lane: f32) -> i32 {
     (((lane + 14.0) * 8.0 / 28.0) as i32).clamp(0, 7)
 }
 
-fn square_corner_strength(lane: f32) -> f32 {
-    let angle = ((lane + 14.0) * 1_024.0 / 28.0) as i32;
-    let diagonal = (sine(angle).abs() - sine(angle + 256).abs()).abs();
-    smoothstep((0.18 - diagonal) / 0.18)
-}
-
+#[cfg(feature = "phase0-audit")]
 fn line_coordinates(index: usize) -> (f32, f32, f32, f32) {
     let lane_width = 28.0 / (GRID_LANES - 1) as f32;
     if index < SPOKE_LINES {
@@ -4546,11 +6175,13 @@ fn line_coordinates(index: usize) -> (f32, f32, f32, f32) {
     }
 }
 
+#[cfg(feature = "phase0-audit")]
 fn cone_direction(lane: f32) -> (f32, f32) {
     let angle = ((lane + 14.0) * 1_024.0 / 28.0) as i32;
     (sine(angle + 256), sine(angle) * 0.61)
 }
 
+#[cfg(feature = "phase0-audit")]
 fn line_ring(index: usize) -> usize {
     if index < SPOKE_LINES {
         index % GRID_RINGS
@@ -4559,6 +6190,7 @@ fn line_ring(index: usize) -> usize {
     }
 }
 
+#[cfg(feature = "phase0-audit")]
 fn flyby_segment(
     index: usize,
     time: f32,
@@ -4699,6 +6331,7 @@ const fn ring_birth(ring: usize) -> f32 {
     birth
 }
 
+#[cfg(feature = "phase0-audit")]
 fn ring_state(ring: usize, time: f32) -> (f32, f32) {
     let first_birth = ring_birth(ring);
     let current_position = travel_row(time);
@@ -4712,18 +6345,7 @@ fn ring_state(ring: usize, time: f32) -> (f32, f32) {
     (current_position - birth_position, birth_position)
 }
 
-fn regular_spoke_state(ring: usize, time: f32) -> (f32, f32) {
-    let current_position = travel_row(time);
-    let regular_position = travel_row(CLEAN_BIRTH) + ring as f32;
-    let relative_cycle = (current_position - regular_position) / GRID_RINGS as f32;
-    let mut cycle = relative_cycle as i32;
-    if relative_cycle < cycle as f32 {
-        cycle -= 1;
-    }
-    let birth_position = regular_position + cycle as f32 * GRID_RINGS as f32;
-    (current_position - birth_position, birth_position)
-}
-
+#[cfg(feature = "phase0-audit")]
 fn outward_row(time: f32, birth: f32) -> f32 {
     travel_row(time) - travel_row(birth)
 }
@@ -4794,14 +6416,33 @@ fn approach_camera_reference(time: f64) -> (f64, f64, f64) {
     )
 }
 
+fn starflight_displacement(time: f64) -> (f64, f64, f64) {
+    if time >= STARFLIGHT_JOIN_TIME {
+        return (0.0, 0.0, 0.0);
+    }
+    quintic_component(
+        (time / STARFLIGHT_JOIN_TIME).clamp(0.0, 1.0),
+        STARFLIGHT_JOIN_TIME,
+        STARFLIGHT_START_DISTANCE_WORLD,
+        0.0,
+        -STARFLIGHT_START_DISTANCE_WORLD * 0.6 / STARFLIGHT_JOIN_TIME,
+        0.0,
+        0.0,
+        0.0,
+    )
+}
+
+#[cfg(feature = "phase0-audit")]
 fn approach_travel_row(time: f32) -> f32 {
     approach_travel_state(time as f64).0 as f32
 }
 
+#[cfg(feature = "phase0-audit")]
 fn travel_row(time: f32) -> f32 {
     approach_travel_row(time)
 }
 
+#[cfg(feature = "phase0-audit")]
 fn birth_shape(birth_position: f32) -> f32 {
     smoothstep(
         (birth_position - approach_travel_row(GRID_SQUARE_START))
@@ -4809,13 +6450,7 @@ fn birth_shape(birth_position: f32) -> f32 {
     )
 }
 
-fn birth_neon(birth_position: f32) -> f32 {
-    smoothstep(
-        (birth_position - approach_travel_row(GRID_SQUARE_START))
-            / (approach_travel_row(GRID_COLOR_FULL) - approach_travel_row(GRID_SQUARE_START)),
-    )
-}
-
+#[cfg(feature = "phase0-audit")]
 fn line_birth(index: usize) -> f32 {
     if index < SPOKE_LINES {
         let ring = index % GRID_RINGS;
@@ -4842,50 +6477,6 @@ fn lit_mesh_color(index: i32, accent: i32, neon: f32, brightness: f32) -> (u8, u
         (star_g + (target.1 * spectral_light - star_g) * neon).clamp(0.0, 255.0) as u8,
         (star_b + (target.2 * spectral_light - star_b) * neon).clamp(0.0, 255.0) as u8,
     )
-}
-
-fn mesh_brightness(
-    time: f32,
-    lane: f32,
-    depth: f32,
-    distance: f32,
-    luminosity: f32,
-    reshaping: f32,
-) -> f32 {
-    let angle = ((lane + 14.0) * 1_024.0 / 28.0) as i32;
-    let key = (sine(angle - (time * 19.0) as i32) * 0.5 + 0.5).clamp(0.0, 1.0);
-    let diffuse = 0.48 + key * 0.52;
-    let mut specular = key * key;
-    specular *= specular;
-    specular *= specular;
-    let traveling_glint =
-        (sine((depth * 57.0 - time * 23.0) as i32 + angle / 3) * 0.5 + 0.5).clamp(0.0, 1.0);
-    let source = 42.0 + distance * 136.0 + luminosity * luminosity * 54.0;
-    let flat = source * diffuse
-        + specular * 108.0
-        + traveling_glint * 18.0;
-    let mut angular_a =
-        (sine(angle - (time * 37.0) as i32) * 0.5 + 0.5).clamp(0.0, 1.0);
-    angular_a *= angular_a;
-    angular_a *= angular_a;
-    let mut depth_a =
-        (sine((depth * 43.0 - time * 51.0) as i32 + 211) * 0.5 + 0.5)
-            .clamp(0.0, 1.0);
-    depth_a *= depth_a;
-    let mut angular_b =
-        (sine(angle * 2 + (time * 29.0) as i32 + 607) * 0.5 + 0.5)
-            .clamp(0.0, 1.0);
-    angular_b *= angular_b;
-    angular_b *= angular_b;
-    let depth_b =
-        (sine((depth * 31.0 + time * 39.0) as i32 + 877) * 0.5 + 0.5)
-            .clamp(0.0, 1.0);
-    let pool_a = angular_a * depth_a;
-    let pool_b = angular_b * depth_b * depth_b;
-    let dramatic = source * (0.22 + key * 0.18 + pool_a * 0.78 + pool_b * 0.52)
-        + specular * 96.0
-        + traveling_glint * 14.0;
-    (flat + (dramatic - flat) * reshaping).clamp(20.0, 255.0)
 }
 
 fn draw_streak_line(
@@ -4939,17 +6530,12 @@ fn draw_star_sparkle(
     center: (f32, f32),
     color: (u8, u8, u8),
     index: i32,
-    time: f32,
+    visibility: f32,
 ) {
     if hash(index, 1_201) < 249 {
         return;
     }
-    let settling = 1.0 - smoothstep((time - STARFIELD_HOLD - 1.0) / 5.0) * 0.65;
-    let mut pulse = (sine((time * 690.0) as i32 + hash(index, 1_819) * 4) * 0.5 + 0.5)
-        .clamp(0.0, 1.0);
-    pulse *= pulse;
-    pulse *= pulse;
-    let intensity = pulse * settling;
+    let intensity = (0.65 + hash(index, 1_819) as f32 / 255.0 * 0.35) * visibility;
     if intensity < 0.16 {
         return;
     }
@@ -5038,275 +6624,166 @@ fn draw_bloom_line(
     }
 }
 
-fn render_continuous_grid(
-    time: f32,
+fn render_universe_field(
+    exposure_start: &FlowCamera,
     flow: &FlowCamera,
     x_scale: f32,
 ) {
-    render_continuous_grid_warped(
-        time,
-        0.0,
-        flow,
-        1.0,
-        x_scale,
-    );
-}
-
-fn render_continuous_grid_warped(
-    time: f32,
-    neon: f32,
-    flow: &FlowCamera,
-    grid_visibility: f32,
-    x_scale: f32,
-) {
-    fill_star_space(flow, x_scale);
+    fill_universe_vacuum();
     let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
-    let clean_birth = CLEAN_BIRTH;
-    let (fog_start, fog_end) = grid_fog_range(time);
-    let particle_transport = flow_field_transport(time);
-
-    let mut index = 0usize;
-    while index < STAR_LINES {
-        let Some((local_a, local_b, depth)) = flyby_segment(index, time, clean_birth) else {
-            index += 1;
+    let universe = universe();
+    let layout = universe.field;
+    let space_visibility = universe_space_visibility(flow);
+    if space_visibility <= 0.0 {
+        return;
+    }
+    let neon = 0.0;
+    let grid_visibility = space_visibility;
+    let mut ordinal = field_first_ring_ordinal(layout);
+    let last_ordinal = field_last_ring_ordinal(layout);
+    while ordinal <= last_ordinal {
+        let ring = field_ring_identity(ordinal);
+        let s = field_ring_s(layout, ring);
+        if s < layout.field_start_s || s > layout.field_end_s {
+            ordinal += 1;
             continue;
+        }
+        let region_neon = field_square_amount(layout, s) as f32;
+        let connectivity = smootherstep_f64(
+            (s - layout.rings_full_s) / (layout.rails_full_s - layout.rings_full_s),
+        ) as f32;
+        let distance_visibility = field_mesh_visibility(layout, s, flow);
+        let mesh_visibility = if s >= layout.rings_full_s {
+            grid_visibility * distance_visibility
+        } else {
+            0.0
         };
-        let Some((projected_a, projected_b)) = project_flow_star_segment(
-            particle_transport,
-            local_a,
-            local_b,
-            depth,
-            flow,
-            x_scale,
-        ) else {
-            index += 1;
-            continue;
-        };
-        let a = (projected_a.0, projected_a.1);
-        let b = (projected_b.0, projected_b.1);
-        if !((a.0 < -2.0 && b.0 < -2.0)
-            || (a.0 > WIDTH as f32 + 2.0 && b.0 > WIDTH as f32 + 2.0)
-            || (a.1 < -2.0 && b.1 < -2.0)
-            || (a.1 > HEIGHT as f32 + 2.0 && b.1 > HEIGHT as f32 + 2.0))
+        if s < layout.rings_full_s
+            && star_cell_may_project(layout, ring, exposure_start)
+            && star_cell_may_project(layout, ring, flow)
         {
-            let middle_x = (a.0 + b.0) * 0.5 - 160.0;
-            let middle_y = (a.1 + b.1) * 0.5 - 100.0;
-            let distance =
-                (fast_sqrt(middle_x * middle_x + middle_y * middle_y) / 175.0)
-                    .clamp(0.0, 1.0);
-            let luminosity = hash(index as i32, 149) as f32 / 255.0;
-            let brightness =
-                (46.0 + distance * 145.0 + luminosity * luminosity * 64.0).min(255.0);
-            let color = lit_mesh_color(index as i32, index as i32, neon, brightness);
-            let alpha = (142.0 + luminosity * 92.0).min(255.0) as u8;
-            let glow = (12.0 + luminosity * luminosity * 42.0 + neon * 28.0) as u8;
-            draw_streak_line(frame, a, b, color, alpha, glow);
-            record_depth_line(
-                a,
-                b,
-                projected_a.2,
-                projected_b.2,
-            );
-            blend_pixel(frame, b.0 as i32, b.1 as i32, color.0, color.1, color.2, alpha);
-            draw_star_sparkle(
-                frame,
-                ((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5),
-                color,
-                index as i32,
-                time,
-            );
-        }
-        index += 1;
-    }
-
-    if grid_visibility <= 0.0 {
-        return;
-    }
-    draw_ordered_radials(
-        time,
-        clean_birth,
-        flow,
-        grid_visibility,
-        x_scale,
-    );
-
-    index = SPOKE_LINES;
-    while index < STAR_LINES {
-        let birth = line_birth(index);
-        if time >= birth {
-            let (lane_a, _, lane_b, _) = line_coordinates(index);
-            let ring = (index - SPOKE_LINES) / (GRID_LANES - 1);
-            let (depth, current_birth) = ring_state(ring, time);
-            let ring_shape = birth_shape(current_birth);
-            let visible_depth = depth;
-            let threshold_ring = current_birth < travel_row(clean_birth);
-            if visible_depth <= fog_start {
-                index += 1;
-                continue;
+            let mut object = 0u16;
+            while object < FIELD_STAR_OBJECTS_PER_CELL {
+                let star = StarObjectIdentity { cell: ring, object };
+                if star_object_exists(layout, star) {
+                    let seed = star_object_seed(star);
+                    let point = star_object_position(layout, star);
+                    if let (Some(previous), Some(current)) = (
+                        project_flow_depth(exposure_start, point),
+                        project_flow_depth(flow, point),
+                    ) {
+                        let previous = (
+                            160.0 + (previous.0 - 160.0) * x_scale,
+                            previous.1,
+                        );
+                        let current_point = (
+                            160.0 + (current.0 - 160.0) * x_scale,
+                            current.1,
+                        );
+                        let luminosity = hash(seed, 149) as f32 / 255.0;
+                        let color = lit_mesh_color(
+                            seed,
+                            seed,
+                            neon,
+                            92.0 + luminosity * 150.0,
+                        );
+                        let alpha =
+                            ((138.0 + luminosity * 104.0) * space_visibility) as u8;
+                        if alpha > 0 {
+                            if let Some((visible_previous, visible_current)) =
+                                clip_screen_line(previous, current_point, 6.0)
+                            {
+                                draw_streak_line(
+                                    frame,
+                                    visible_previous,
+                                    visible_current,
+                                    color,
+                                    alpha,
+                                    (18.0 * space_visibility) as u8,
+                                );
+                                record_depth_line(
+                                    visible_previous,
+                                    visible_current,
+                                    current.2,
+                                    current.2,
+                                );
+                                if current_point.0 >= -6.0
+                                    && current_point.0 < WIDTH as f32 + 6.0
+                                    && current_point.1 >= -6.0
+                                    && current_point.1 < HEIGHT as f32 + 6.0
+                                {
+                                    draw_star_sparkle(
+                                        frame,
+                                        current_point,
+                                        color,
+                                        seed,
+                                        space_visibility,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                object += 1;
             }
-            let distance_visibility = if threshold_ring {
-                1.0
-            } else {
-                smoothstep(
-                    (visible_depth - fog_start) / (fog_end - fog_start),
-                )
-            };
-            let point_a = grid_section_point(lane_a, ring_shape);
-            let point_b = grid_section_point(lane_b, ring_shape);
-            let Some((a, b)) = project_flow_grid_segment(
-                time,
-                point_a,
-                depth,
-                point_b,
-                depth,
-                flow,
-                x_scale,
-            ) else {
-                index += 1;
-                continue;
-            };
-            let middle_x = (a.0 + b.0) * 0.5 - 160.0;
-            let middle_y = (a.1 + b.1) * 0.5 - 100.0;
-            let distance = (fast_sqrt(middle_x * middle_x + middle_y * middle_y) / 175.0)
-                .clamp(0.0, 1.0);
-            let luminosity = hash(index as i32, 149) as f32 / 255.0;
-            let brightness = mesh_brightness(
-                time,
-                (lane_a + lane_b) * 0.5,
-                visible_depth,
-                distance,
-                luminosity,
-                ring_shape,
-            );
-            let ring_neon = birth_neon(current_birth);
-            let lane_middle = (lane_a + lane_b) * 0.5;
-            let color = lit_mesh_color(
-                index as i32,
-                mesh_accent(lane_middle),
-                ring_neon,
-                brightness,
-            );
-            let alpha = ((154.0 + luminosity * 78.0).min(238.0)
-                * distance_visibility
-                * grid_visibility) as u8;
-            let glow = ((10.0 + luminosity * luminosity * 30.0 + ring_neon * 12.0)
-                * distance_visibility
-                * grid_visibility) as u8;
-            draw_bloom_line(frame, (a.0, a.1), (b.0, b.1), color, alpha, glow);
-            record_depth_line((a.0, a.1), (b.0, b.1), a.2, b.2);
-            blend_pixel(frame, b.0 as i32, b.1 as i32, color.0, color.1, color.2, alpha);
         }
-        index += 1;
+        let mut lane = 0usize;
+        while lane < GRID_LANES - 1 {
+            let mesh_seed = ordinal
+                .wrapping_mul(1_009)
+                .wrapping_add(lane as i32 * 313);
+            if mesh_visibility > 0.0 {
+                let ring_object = RingObjectIdentity { ring };
+                let ring_points = ring_object_segment(layout, ring_object, lane as u16);
+                if let Some((a, b)) =
+                    project_field_segment(ring_points.0, ring_points.1, flow, x_scale)
+                {
+                    let luminosity = hash(mesh_seed, 149) as f32 / 255.0;
+                    let color = lit_mesh_color(
+                        mesh_seed,
+                        mesh_accent(-14.0 + lane as f32 * 28.0 / 72.0),
+                        region_neon,
+                        82.0 + luminosity * 142.0,
+                    );
+                    let alpha = ((142.0 + luminosity * 82.0) * mesh_visibility) as u8;
+                    if alpha > 0 {
+                        draw_bloom_line(frame, (a.0, a.1), (b.0, b.1), color, alpha, 12);
+                        record_depth_line((a.0, a.1), (b.0, b.1), a.2, b.2);
+                    }
+                }
+                if connectivity > 0.0 && ordinal < last_ordinal {
+                    let rail = RailObjectIdentity {
+                        first_ring: ring,
+                        lane: lane as u16,
+                    };
+                    let axial_points = rail_object_segment(layout, rail);
+                    if let Some((a, b)) =
+                        project_field_segment(axial_points.0, axial_points.1, flow, x_scale)
+                    {
+                        let luminosity = hash(mesh_seed, 503) as f32 / 255.0;
+                        let color = lit_mesh_color(
+                            mesh_seed,
+                            mesh_accent(-14.0 + lane as f32 * 28.0 / 72.0),
+                            region_neon,
+                            72.0 + luminosity * 138.0,
+                        );
+                        let alpha = ((132.0 + luminosity * 86.0)
+                            * connectivity
+                            * mesh_visibility) as u8;
+                        if alpha > 0 {
+                            draw_bloom_line(frame, (a.0, a.1), (b.0, b.1), color, alpha, 10);
+                            record_depth_line((a.0, a.1), (b.0, b.1), a.2, b.2);
+                        }
+                    }
+                }
+            }
+            lane += 1;
+        }
+        ordinal += 1;
     }
 }
 
-fn draw_ordered_radials(
-    time: f32,
-    clean_birth: f32,
-    flow: &FlowCamera,
-    grid_visibility: f32,
-    x_scale: f32,
-) {
-    let introduction = STAR_ORGANIZE + 1.5;
-    if time <= introduction {
-        return;
-    }
-    let introduction_position = travel_row(introduction);
-    let clean_position = travel_row(clean_birth);
-    let (fog_start, fog_end) = grid_fog_range(time);
-    let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
-    let mut lane_index = 0usize;
-    while lane_index < GRID_LANES {
-        let lane = -14.0 + lane_index as f32 * (28.0 / (GRID_LANES - 1) as f32);
-        let mut ring = 0usize;
-        while ring < GRID_RINGS {
-            let next_ring = (ring + 1) % GRID_RINGS;
-            let (mut outer, outer_birth) = regular_spoke_state(ring, time);
-            let (mut inner, inner_birth) = regular_spoke_state(next_ring, time);
-            if outer_birth > inner_birth {
-                ring += 1;
-                continue;
-            }
-            let prominence = smoothstep(
-                (inner_birth - introduction_position)
-                    / (clean_position - introduction_position),
-            );
-            if prominence <= 0.0 {
-                ring += 1;
-                continue;
-            }
-            let visible_depth = outer.max(inner);
-            if visible_depth <= fog_start {
-                ring += 1;
-                continue;
-            }
-            let mut outer_shape = birth_shape(outer_birth);
-            let mut inner_shape = birth_shape(inner_birth);
-            if outer > inner && inner < fog_start {
-                let span = (outer - inner).max(0.001);
-                let clip = ((fog_start - inner) / span).clamp(0.0, 1.0);
-                inner += (outer - inner) * clip;
-                inner_shape += (outer_shape - inner_shape) * clip;
-            } else if inner > outer && outer < fog_start {
-                let span = (inner - outer).max(0.001);
-                let clip = ((fog_start - outer) / span).clamp(0.0, 1.0);
-                outer += (inner - outer) * clip;
-                outer_shape += (inner_shape - outer_shape) * clip;
-            }
-            let visibility = smoothstep(
-                (visible_depth - fog_start) / (fog_end - fog_start),
-            ) * prominence;
-            let point_a = grid_section_point(lane, outer_shape);
-            let point_b = grid_section_point(lane, inner_shape);
-            let index = lane_index * GRID_RINGS + ring;
-            let Some((a, b)) = project_flow_grid_segment(
-                time,
-                point_a,
-                outer,
-                point_b,
-                inner,
-                flow,
-                x_scale,
-            ) else {
-                ring += 1;
-                continue;
-            };
-            let middle_x = (a.0 + b.0) * 0.5 - 160.0;
-            let middle_y = (a.1 + b.1) * 0.5 - 100.0;
-            let distance = (fast_sqrt(middle_x * middle_x + middle_y * middle_y) / 175.0)
-                .clamp(0.0, 1.0);
-            let luminosity = hash(index as i32, 149) as f32 / 255.0;
-            let brightness = mesh_brightness(
-                time,
-                lane,
-                visible_depth,
-                distance,
-                luminosity,
-                (outer_shape + inner_shape) * 0.5,
-            );
-            let spoke_neon = birth_neon(inner_birth);
-            let seam = square_corner_strength(lane) * spoke_neon;
-            let color = lit_mesh_color(
-                index as i32,
-                mesh_accent(lane),
-                spoke_neon,
-                brightness,
-            );
-            let alpha = ((154.0 + luminosity * 78.0 + seam * 17.0).min(250.0)
-                * visibility
-                * grid_visibility) as u8;
-            let glow = ((10.0 + luminosity * luminosity * 30.0 + spoke_neon * 12.0
-                + seam * 18.0)
-                * visibility
-                * grid_visibility) as u8;
-            draw_bloom_line(frame, (a.0, a.1), (b.0, b.1), color, alpha, glow);
-            record_depth_line((a.0, a.1), (b.0, b.1), a.2, b.2);
-            ring += 1;
-        }
-        lane_index += 1;
-    }
-}
-
+#[cfg(feature = "phase0-audit")]
 fn grid_section_point(lane: f32, reshaping: f32) -> (f32, f32) {
     let angle = ((lane + 14.0) * 1_024.0 / 28.0) as i32;
     let circular_x = sine(angle + 256);
@@ -5369,6 +6846,41 @@ fn clip_line_parameter(p: f64, q: f64, enter: &mut f64, leave: &mut f64) -> bool
         }
     }
     true
+}
+
+fn clip_screen_line(
+    start: (f32, f32),
+    end: (f32, f32),
+    margin: f32,
+) -> Option<((f32, f32), (f32, f32))> {
+    let x0 = start.0 as f64;
+    let y0 = start.1 as f64;
+    let dx = end.0 as f64 - x0;
+    let dy = end.1 as f64 - y0;
+    let margin = margin as f64;
+    let mut enter = 0.0;
+    let mut leave = 1.0;
+    if !clip_line_parameter(-dx, x0 + margin, &mut enter, &mut leave)
+        || !clip_line_parameter(
+            dx,
+            WIDTH as f64 - 1.0 + margin - x0,
+            &mut enter,
+            &mut leave,
+        )
+        || !clip_line_parameter(-dy, y0 + margin, &mut enter, &mut leave)
+        || !clip_line_parameter(
+            dy,
+            HEIGHT as f64 - 1.0 + margin - y0,
+            &mut enter,
+            &mut leave,
+        )
+    {
+        return None;
+    }
+    Some((
+        ((x0 + dx * enter) as f32, (y0 + dy * enter) as f32),
+        ((x0 + dx * leave) as f32, (y0 + dy * leave) as f32),
+    ))
 }
 
 fn clear_depth_buffer() {
@@ -5526,15 +7038,6 @@ fn draw_sun(center_x: f32, center_y: f32, amount: f32) {
             x += 1;
         }
         y += 1;
-    }
-}
-
-fn put_pixel(frame: *mut u8, x: usize, y: usize, r: u8, g: u8, b: u8) {
-    let offset = (y * WIDTH + x) * 3;
-    unsafe {
-        frame.add(offset).write(r);
-        frame.add(offset + 1).write(g);
-        frame.add(offset + 2).write(b);
     }
 }
 

@@ -3,16 +3,20 @@
 atmosphere_shell_radius planet_radius_plus_100km
 optical_depth_driver shell_ray_length_and_density
 background_attenuation grid_depth_limited
-rendered_grid_optical_sample_seconds 78
+rendered_grid_optical_sample first_partial-density_fast-entry_pose_between_35_and_60_seconds
 rendered_grid_optical_alpha bounded_by_full_shell_ray
+space_field_visibility continuous_one_minus_atmospheric_density
+space_field_extinction_seconds 60..90
+space_field_extinction_altitude_feet 30000
+space_field_extinguished_depth_writes zero_at_78_seconds
 surface_attenuation surface_distance_limited
 plasma_driver atmospheric_density_times_measured_speed
 plasma_flow_coordinates camera_ground_track
 cloud_coordinates persistent_surface_normal
 sun_direction persistent_world_vector
 sun_depth infinite_rejected_by_foreground_geometry
-sun_valley_exposure_times_seconds 106,113,122,137
-sun_valley_exposure_min_unoccluded_pixels 12
+sun_airplane_pass_exposure_times_seconds 60,70,80,90
+sun_airplane_pass_exposure_min_unoccluded_pixels 12
 atmosphere_tile_size_pixels 4
 plasma_tile_size_pixels 2
 representative_frame_limit_ms 33.333334
@@ -22,7 +26,9 @@ representative_times_seconds 65,78,86,94,100,106
 # `make audit-phase6` reruns every earlier gate. It verifies altitude-driven
 # shell activation, denser downward optical depth, grid depth recording,
 # speed-coupled plasma, invariant cloud coordinates, actual rendered-grid
-# attenuation through the same production depth-limited ray function, verifies
-# that the fixed sun is within the frame and exposed by the real grid/surface
-# depth buffer throughout the valley sequence, and checks the combined
+# attenuation at a physical partial-density entry pose through the same
+# production depth-limited ray function, complete field extinction during the
+# 30,000-foot airplane pass, and verifies
+# that the fixed sun is within the frame and exposed by the real surface depth
+# buffer throughout the 30,000-foot pass, and checks the combined
 # surface/atmosphere frame-time ceiling.

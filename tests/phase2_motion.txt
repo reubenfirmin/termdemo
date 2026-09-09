@@ -22,9 +22,9 @@ airplane_pass_seconds 60..90
 airplane_pass_displaced_agl_feet 30000
 airplane_pass_phase_advance_units_max 128
 valley_overhead_seconds 98
-valley_overhead_displaced_agl_feet 1500
+valley_overhead_displaced_agl_metres 1500
 valley_corridor_seconds 108
-valley_corridor_displaced_agl_feet 200
+valley_corridor_displaced_agl_metres 200
 low_flight_altitude_seconds 116
 low_flight_altitude_metres 20
 low_flight_endpoint_seconds 137
