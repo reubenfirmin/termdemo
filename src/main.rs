@@ -20,6 +20,8 @@ mod flight_speedlaw; use flight_speedlaw::*;
 mod flight_math;
 mod math; use math::*;
 mod camera; use camera::*;
+mod render_workers;
+mod field_snapshot;
 #[cfg(feature="phase0-audit")] mod audit_trace;
 #[cfg(feature="phase0-audit")] mod audit_controls;
 #[cfg(feature="phase0-audit")] use audit_controls::*;
@@ -485,9 +487,15 @@ fn smooth_map(map: *const u8, x: f32, y: f32) -> f32 {
 }
 
 fn render_demo(elapsed: f32, x_scale: f32) {
+    render_workers::render(elapsed,x_scale);
+}
+
+fn render_frame_region(elapsed: f32, x_scale: f32) {
     let flow = flow_camera(elapsed);
     let exposure_start = field_star_exposure_camera(elapsed, &flow);
-    clear_depth_buffer();
+    // Parallel tiles receive their exact initial depth from the field snapshot.
+    // Clearing the whole framebuffer for each tile would repeat this 25 times.
+    if !render_workers::parallel_region() {clear_depth_buffer();}
     #[cfg(feature="phase0-audit")] let start=process_cpu_ns();
     render_universe_field(&exposure_start, &flow, x_scale);
     #[cfg(feature="phase0-audit")] unsafe {FRAME_STAGE_NS[0]=process_cpu_ns()-start;}
@@ -1276,7 +1284,7 @@ fn raster_surface_triangle(
     let maximum_y = ceil_i32(a.y.max(b.y).max(c.y)).min(HEIGHT as i32);
     let inverse_area = 1.0 / area;
     let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
-    let mut y = minimum_y;
+    let mut y = render_workers::next_row(minimum_y);
     while y < maximum_y {
         let py = y as f32 + 0.5;
         let mut x = minimum_x;
@@ -1305,7 +1313,7 @@ fn raster_surface_triangle(
             }
             x += 1;
         }
-        y += 1;
+        y = render_workers::next_row(y + 1);
     }
 }
 
@@ -1324,7 +1332,7 @@ fn raster_surface_boundary_cell(
     let top = floor_i32(a.y.min(b.y)).max(0);
     let bottom = ceil_i32(c.y.max(d.y)).min(HEIGHT as i32);
     let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
-    let mut y = top;
+    let mut y = render_workers::next_row(top);
     while y < bottom {
         let mut x = left;
         while x < right {
@@ -1384,7 +1392,7 @@ fn raster_surface_boundary_cell(
             }
             x += 1;
         }
-        y += 1;
+        y = render_workers::next_row(y + 1);
     }
 }
 
@@ -1424,24 +1432,21 @@ fn render_polygon_surface_lod(
 
     let row_a = core::ptr::addr_of_mut!(SURFACE_ROW_A).cast::<SurfaceVertex>();
     let row_b = core::ptr::addr_of_mut!(SURFACE_ROW_B).cast::<SurfaceVertex>();
-    let mut column = 0usize;
-    while column < columns {
-        let x = left + column as i32 * step;
-        unsafe {
-            row_a.add(column).write(sample_surface_vertex(
-                camera,
-                time,
-                x_scale,
-                x as f32,
-                top as f32,
-            ));
-        }
-        column += 1;
-    }
-
+    let mut cached_row=None;
     let mut y = top + step;
     while y <= bottom + step {
-        column = 0;
+        // Partition raster ownership, not geometry. Keep the original lattice
+        // coordinates, including the shared vertices on stripe boundaries.
+        if render_workers::next_row((y-step).max(0))>=y.min(HEIGHT as i32) {
+            y+=step;continue;
+        }
+        if cached_row!=Some(y-step) {
+            for column in 0..columns {
+                let x=left+column as i32*step;
+                unsafe {row_a.add(column).write(sample_surface_vertex(camera,time,x_scale,x as f32,(y-step) as f32));}
+            }
+        }
+        let mut column = 0;
         while column < columns {
             let x = left + column as i32 * step;
             unsafe {
@@ -1479,6 +1484,7 @@ fn render_polygon_surface_lod(
             unsafe { row_a.add(column).write(row_b.add(column).read()) };
             column += 1;
         }
+        cached_row=Some(y);
         y += step;
     }
 }
@@ -1807,7 +1813,7 @@ fn apply_atmospheric_shell(camera: &FlowCamera, x_scale: f32) {
     const TILE: usize = 4;
     let frame = core::ptr::addr_of_mut!(FRAME).cast::<u8>();
     let depth_buffer = core::ptr::addr_of!(DEPTH).cast::<f32>();
-    let mut y = 0usize;
+    let mut y = render_workers::next_row(0) as usize;
     while y < HEIGHT {
         let mut x = 0usize;
         while x < WIDTH {
@@ -1852,7 +1858,7 @@ fn apply_atmospheric_shell(camera: &FlowCamera, x_scale: f32) {
             }
             x += TILE;
         }
-        y += TILE;
+        y = render_workers::next_row((y+TILE) as i32) as usize;
     }
 }
 
@@ -2057,7 +2063,7 @@ fn draw_bloom_line(
     let right = ((start.0.max(end.0) + 3.0) as i32 + 1).min(WIDTH as i32 - 1);
     let top = ((start.1.min(end.1) - 3.0) as i32 - 1).max(0);
     let bottom = ((start.1.max(end.1) + 3.0) as i32 + 1).min(HEIGHT as i32 - 1);
-    let mut y = top;
+    let mut y = render_workers::next_row(top);
     while y <= bottom {
         let sample_y = y as f32 + 0.5;
         let mut x = left;
@@ -2094,7 +2100,7 @@ fn draw_bloom_line(
             }
             x += 1;
         }
-        y += 1;
+        y = render_workers::next_row(y + 1);
     }
 }
 
@@ -2120,6 +2126,7 @@ fn render_universe_field(
     flow: &FlowCamera,
     x_scale: f32,
 ) {
+    if field_snapshot::replay() {return;}
     #[cfg(feature = "phase0-audit")]
     unsafe { FIELD_RENDER_STATS = EMPTY_FIELD_RENDER_STATS; }
     fill_universe_vacuum();
@@ -2289,8 +2296,7 @@ fn render_universe_field(
                         if clip_screen_line((a.0, a.1), (b.0, b.1), 3.0).is_some() {
                             unsafe { FIELD_RENDER_STATS.ring_edges += 1; }
                         }
-                        draw_bloom_line(frame, (a.0, a.1), (b.0, b.1), color, alpha, 12);
-                        record_depth_line((a.0, a.1), (b.0, b.1), a.2, b.2);
+                        field_snapshot::edge(a,b,color,alpha,12);
                     }
                 }
                 if ordinal < last_ordinal {
@@ -2317,8 +2323,7 @@ fn render_universe_field(
                                 if clip_screen_line((a.0, a.1), (b.0, b.1), 3.0).is_some() {
                                     unsafe { FIELD_RENDER_STATS.spoke_edges += 1; }
                                 }
-                                draw_bloom_line(frame, (a.0, a.1), (b.0, b.1), color, alpha, 10);
-                                record_depth_line((a.0, a.1), (b.0, b.1), a.2, b.2);
+                                field_snapshot::edge(a,b,color,alpha,10);
                             }
                         }
                     }
@@ -2517,7 +2522,7 @@ fn draw_sun(center_x: f32, center_y: f32, amount: f32) {
     let right = (center_x + halo_radius).min(WIDTH as f32 - 1.0) as i32;
     let top = (center_y - halo_radius).max(0.0) as i32;
     let bottom = (center_y + halo_radius).min(HEIGHT as f32 - 1.0) as i32;
-    let mut y = top;
+    let mut y = render_workers::next_row(top);
     while y <= bottom {
         let dy = y as f32 - center_y;
         let mut x = left;
@@ -2542,7 +2547,7 @@ fn draw_sun(center_x: f32, center_y: f32, amount: f32) {
             }
             x += 1;
         }
-        y += 1;
+        y = render_workers::next_row(y + 1);
     }
 }
 
@@ -2804,6 +2809,7 @@ fn syscall3(number: usize, a: usize, b: usize, c: usize) -> isize {
 }
 
 fn exit(code: usize) -> ! {
+    render_workers::shutdown();
     unsafe {
         asm!(
             "syscall",

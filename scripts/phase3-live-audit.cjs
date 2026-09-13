@@ -10,6 +10,7 @@ const {fitSpeed,coupledRoute,spatialBend,arcTable,kinematics,integral} = require
 const audit = process.env.PHASE3_AUDIT_BINARY || 'target/phase0-audit/x86_64-unknown-linux-gnu/release/termdemo';
 const normal = process.env.PHASE3_NORMAL_BINARY || 'target/x86_64-unknown-linux-gnu/release/termdemo';
 const reference = require('../tests/phase3-opening-reference.json');
+const openingRevision = require('../tests/phase3-opening-grid-revision.json');
 const study = require('../tests/phase3-proposal-reference.json');
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const dot = (a,b) => a.reduce((s,x,i)=>s+x*b[i],0);
@@ -17,6 +18,8 @@ const sub = (a,b) => a.map((x,i)=>x-b[i]);
 const scale = (a,k) => a.map(x=>x*k);
 const smooth = u => {u=Math.max(0,Math.min(1,u));return u**3*(10+u*(-15+6*u));};
 const result = {gates:{},measurements:{},frames:[],openingFrames:[]};
+result.binaries={normal:{path:normal,sha256:sha(fs.readFileSync(normal))},
+  audit:{path:audit,sha256:sha(fs.readFileSync(audit))}};
 function gate(name,condition,detail) {
   result.gates[name]={pass:!!condition,detail};
   console.log(`${condition?'PASS':'FAIL'} ${name}: ${JSON.stringify(detail)}`);
@@ -44,6 +47,9 @@ for(let i=0;i<reference.native_samples;i++)h.update(trace.subarray(28+i*200+8,28
 gate('protected-opening-native',h.digest('hex')===reference.native_sha256,{samples:reference.native_samples});
 gate('fixed-star-catalogue',sha(run(audit,Buffer.from('I')))===reference.catalogue_query_I_sha256,{objects:16254});
 gate('world-topology-alternate-cameras-and-clipping',run(audit,Buffer.from('N')).toString().includes('audit ok'),{});
+const workerWitness=run(audit,Buffer.from('C')).toString().trim();
+gate('parallel-renderer-rgb-and-depth',workerWitness.includes('audit ok')
+  && workerWitness.includes('after real worker failure'),{comparisons:45,witness:workerWitness});
 const speed=fitSpeed();
 const terrain={ground:study.route.ground,slope:study.route.groundSlopePerRadian};
 const base=coupledRoute(study.route.thetaEnd,study.route.sigma,terrain,study.route.opening);
@@ -152,15 +158,41 @@ result.measurements.gridCadence={maxHz:Math.max(...cadence),maxCyclesPer30fpsFra
 
 for(const frame of reference.frames) {
   const bytes=run(normal,Buffer.from(String(frame.time)));assert.equal(bytes.length,192000);
-  result.openingFrames.push({...frame,actual:sha(bytes),pass:sha(bytes)===frame.sha256});
+  const revision=openingRevision.frames.find(x=>x.time===frame.time);
+  const actual=sha(bytes);
+  let outside=null;
+  if(revision) {
+    const {left,right,top,bottom}=openingRevision.rectangle_inclusive;
+    const h=crypto.createHash('sha256');
+    for(let y=0;y<200;y++) {
+      const start=y*320*3;
+      if(y<top || y>bottom)h.update(bytes.subarray(start,start+320*3));
+      else {
+        h.update(bytes.subarray(start,start+left*3));
+        h.update(bytes.subarray(start+(right+1)*3,start+320*3));
+      }
+    }
+    outside=h.digest('hex');
+  }
+  result.openingFrames.push({...frame,actual,approvedGridRevision:revision||null,outside,
+    pass:revision ? actual===revision.sha256 && outside===revision.original_outside_sha256 : actual===frame.sha256});
 }
-gate('protected-opening-rgb',result.openingFrames.every(x=>x.pass),{failedTimes:result.openingFrames.filter(x=>!x.pass).map(x=>x.time)});
+gate('protected-opening-rgb',result.openingFrames.every(x=>x.pass),{
+  failedTimes:result.openingFrames.filter(x=>!x.pass).map(x=>x.time),
+  approvedGridRevision:openingRevision.rectangle_inclusive,originalReferenceRetained:true});
+const parityTimes=[5,16,29,35,57,65,70,77];
+const parityFailures=parityTimes.filter(time=>{
+  const input=Buffer.from(String(time));
+  return !run(normal,input).equals(run(audit,input));
+});
+gate('instrumented-renderer-parity',parityFailures.length===0,{times:parityTimes,failedTimes:parityFailures});
 const times=[4,5,7.6,11,16,20,23,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,45,50,57,60,65,70,75,77];
 const queries=times.flatMap(t=>[0.75,1,1.5].map(aspect=>[t,aspect]));
 const request=Buffer.alloc(16+queries.length*16);request[0]=84;
 queries.forEach(([t,a],i)=>{request.writeDoubleLE(t,16+i*16);request.writeDoubleLE(a,24+i*16);});
-const rendered=run(audit,request);assert.equal(rendered.subarray(0,8).toString(),'TDFRAME3');
-for(let i=8;i<rendered.length;i+=96){const v=doubles(rendered.subarray(i,i+96));result.frames.push({time:v[0],aspect:v[1],cpuMs:v[2],starPoints:v[3],starStreaks:v[4],ringEdges:v[5],spokeEdges:v[6],surfaceVisible:v[7],sun:[v[8],v[9]],projectionError:v[10],agl:v[11]});}
+const rendered=run(audit,request);assert.equal(rendered.subarray(0,8).toString(),'TDFRAME4');
+assert.equal(rendered.length,8+queries.length*104);
+for(let i=8;i<rendered.length;i+=104){const v=doubles(rendered.subarray(i,i+104));result.frames.push({time:v[0],aspect:v[1],wallMs:v[2],starPoints:v[3],starStreaks:v[4],ringEdges:v[5],spokeEdges:v[6],surfaceVisible:v[7],sun:[v[8],v[9]],projectionError:v[10],agl:v[11],renderCpuMs:v[12]});}
 gate('post-emergence-points',result.frames.filter(x=>x.time>=5).every(x=>x.starStreaks===0),{});
 gate('ring-visible-on-emergence',result.frames.filter(x=>x.time===5).every(x=>x.ringEdges>0),{});
 gate('spokes-survive-entry',result.frames.filter(x=>x.time>=7.599 && x.time<=26).every(x=>x.spokeEdges>0),{});
@@ -180,7 +212,7 @@ const sunWitnesses=[29,35].map(time=>{
   return {time,position:frame.sun,sunPixels};
 });
 gate('rendered-sun-in-first-two-orbits',sunWitnesses.every(w=>w.sunPixels>200),sunWitnesses);
-gate('frame-time-30fps',result.frames.every(x=>x.cpuMs<1000/30),{worstFrames:result.frames.toSorted((a,b)=>b.cpuMs-a.cpuMs).slice(0,5)});
+gate('frame-time-30fps',result.frames.every(x=>x.wallMs<1000/30),{metric:'monotonic wall time, including worker dispatch and RGB/depth assembly',worstFrames:result.frames.toSorted((a,b)=>b.wallMs-a.wallMs).slice(0,5)});
 gate('playback-controls',run(audit,Buffer.from('_')).toString().includes('audit ok'),{});
 result.status=Object.values(result.gates).every(x=>x.pass)?'PASS':'FAIL';
 fs.mkdirSync('target/phase3-audit',{recursive:true});

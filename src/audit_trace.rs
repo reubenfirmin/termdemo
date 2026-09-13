@@ -11,7 +11,9 @@ pub(super) fn dispatch(selector: u8) {
         b'I' => query_all_stars(),
         b'J' => query_world(),
         b'T' => query_frames(),
-        b'P' => profile_frames(),
+        b'P' => profile_frames(true),
+        b'p' => profile_frames(false),
+        b'C' => check_render_workers(),
         b'N' => check_world_and_clipping(),
         b'!'|b'@'|b'#'|b'^'|b'%'|b'&'|b'*'|b'+'|b'?'|b'='|b'~'|b':'|
         b'v'|b'b'|b'd'|b'w'|b'F'|b'R'|b'A' => {
@@ -204,11 +206,11 @@ fn read_pair()->Option<(f64,f64)> {
 
 fn query_frames()->! {
     use super::*;
-    write_all(b"TDFRAME3");
+    write_all(b"TDFRAME4");
     while let Some((t,aspect))=read_pair() {
         let t=t as f32;let aspect=aspect as f32;let camera=flow_camera(t);
-        let start=process_cpu_ns();render_demo(t,aspect);
-        let elapsed=(process_cpu_ns()-start) as f64/1e6;
+        let start=now_ns();render_demo(t,aspect);
+        let elapsed=(now_ns()-start) as f64/1e6;
         let stats=unsafe {core::ptr::addr_of!(FIELD_RENDER_STATS).read()};
         let surface=projected_surface_bounds(&camera,aspect);
         let sun=flow_sun_projection(&camera,aspect).unwrap_or((f32::NAN,f32::NAN));
@@ -223,26 +225,70 @@ fn query_frames()->! {
         doubles(&[t as f64,aspect as f64,elapsed,stats.star_points as f64,
             stats.star_streaks as f64,stats.ring_edges as f64,stats.spoke_edges as f64,
             surface.visible as f64,sun.0 as f64,sun.1 as f64,projection_error,
-            camera.altitude_miles*METERS_PER_MILE]);
+            camera.altitude_miles*METERS_PER_MILE,
+            unsafe {render_workers::FRAME_CPU_NS} as f64/1e6]);
     }
     exit(0)
 }
 
-// Audit-only coarse timing around the actual render stages. Keep T's existing
-// protocol stable and exclude startup/table construction from per-frame costs.
-fn profile_frames()->! {
+// Wall time includes worker dispatch/assembly; CPU reports sum rendering work
+// in ALL processes. Parent CPU alone is not a valid parallel frame-time metric.
+fn profile_frames(parallel:bool)->! {
     use super::*;
-    write_all(b"TDPROF03");
+    write_all(b"TDPROF04");
     while let Some((t,aspect))=read_pair() {
         unsafe {LANDSCAPE_HEIGHT_EVALUATIONS=0;SURFACE_CACHE_MISSES=0;}
-        let start=process_cpu_ns();render_demo(t as f32,aspect as f32);
-        let elapsed=(process_cpu_ns()-start) as f64/1e6;
+        let start=now_ns();
+        if parallel {render_demo(t as f32,aspect as f32);}
+        else {render_workers::serial(t as f32,aspect as f32);}
+        let elapsed=(now_ns()-start) as f64/1e6;
         let stages=unsafe {core::ptr::addr_of!(FRAME_STAGE_NS).read()};
         doubles(&[t,aspect,elapsed,stages[0] as f64/1e6,stages[1] as f64/1e6,
             stages[2] as f64/1e6,stages[3] as f64/1e6,
             unsafe {LANDSCAPE_HEIGHT_EVALUATIONS} as f64,
-            unsafe {SURFACE_CACHE_MISSES} as f64]);
+            unsafe {SURFACE_CACHE_MISSES} as f64,
+            unsafe {render_workers::FRAME_CPU_NS} as f64/1e6]);
     }
+    exit(0)
+}
+
+fn check_render_workers()->! {
+    use super::*;
+    static mut REFERENCE:[u8;FRAME_BYTES]=[0;FRAME_BYTES];
+    static mut REFERENCE_DEPTH:[f32;PIXELS]=[0.0;PIXELS];
+    for t in [0.001,3.985,4.0,5.0,7.6,16.0,23.0,26.0,29.0,35.0,41.0,57.0,65.0,70.0,77.0] {
+        for aspect in [0.75,1.0,1.5] {
+            render_workers::serial(t,aspect);
+            unsafe {
+                core::ptr::copy_nonoverlapping(core::ptr::addr_of!(FRAME).cast::<u8>(),core::ptr::addr_of_mut!(REFERENCE).cast::<u8>(),FRAME_BYTES);
+                core::ptr::copy_nonoverlapping(core::ptr::addr_of!(DEPTH).cast::<f32>(),core::ptr::addr_of_mut!(REFERENCE_DEPTH).cast::<f32>(),PIXELS);
+            }
+            render_demo(t,aspect);
+            for (length,a,b) in [(FRAME_BYTES,core::ptr::addr_of!(FRAME).cast::<u8>(),core::ptr::addr_of!(REFERENCE).cast::<u8>()),
+                (PIXELS*4,core::ptr::addr_of!(DEPTH).cast::<u8>(),core::ptr::addr_of!(REFERENCE_DEPTH).cast::<u8>())] {
+                for i in 0..length {if unsafe {a.add(i).read()!=b.add(i).read()} {
+                    write_all(b"Worker mismatch (time, aspect, length, offset, actual, reference): ");
+                    doubles(&[t as f64,aspect as f64,length as f64,i as f64,
+                        unsafe {a.add(i).read()} as f64,unsafe {b.add(i).read()} as f64]);exit(2);
+                }}
+            }
+        }
+    }
+    render_workers::check_ownership_and_shutdown();
+    // Last references contain the serial 77s/aspect1.5 frame. Kill a private
+    // idle child and make production dispatch recover that exact same frame.
+    let failed_pid=render_workers::fail_one_worker();
+    render_demo(77.0,1.5);
+    assert!(render_workers::is_serial());
+    for (length,a,b) in [(FRAME_BYTES,core::ptr::addr_of!(FRAME).cast::<u8>(),core::ptr::addr_of!(REFERENCE).cast::<u8>()),
+        (PIXELS*4,core::ptr::addr_of!(DEPTH).cast::<u8>(),core::ptr::addr_of!(REFERENCE_DEPTH).cast::<u8>())] {
+        for i in 0..length {assert!(unsafe {a.add(i).read()==b.add(i).read()});}
+    }
+    render_workers::check_ownership_and_shutdown();
+    write_all(b"worker audit ok: 45 serial/parallel RGB AND depth comparisons; exact row/tile ownership; reaped children; serial fallback");
+    if failed_pid>0 {write_all(b" after real worker failure");}
+    else {write_all(b" (single-CPU/restricted host; worker-failure injection unavailable)");}
+    write_all(b"\n");
     exit(0)
 }
 

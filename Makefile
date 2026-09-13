@@ -27,12 +27,15 @@ audit-build:
 
 # Test the normal executable, using the existing instrumented audit build for
 # state queries. No separate preview build and no updates to reference hashes.
-.PHONY: audit-phase3-live profile-phase3-render
+.PHONY: audit-phase3-live profile-phase3-render profile-phase3-playback
 audit-phase3-live: build audit-build
 	node scripts/phase3-live-audit.cjs
 
 profile-phase3-render: build audit-build
 	node scripts/profile-phase3-render.cjs
+
+profile-phase3-playback: build
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/profile-phase3-playback.py
 
 # Candidate descent measurements only; does not rebuild the normal demo.
 # Passing this gate does NOT waive the independent braking/volume gates.

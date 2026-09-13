@@ -1,0 +1,13 @@
+{
+  "approval": "2026-09-13: user instructed finish phase 3 after the specific grid-only late-opening pixel question. Stars and camera remain protected exactly; this is not a general baseline reset.",
+  "original_reference": "phase3-opening-reference.json",
+  "rectangle_inclusive": {"left": 152, "right": 167, "top": 92, "bottom": 107},
+  "outside_hash_definition": "Row-major RGB24 at 320x200, excluding only the inclusive rectangle. These hashes match the ORIGINAL executable outside that rectangle.",
+  "frames": [
+    {"time": 3.985, "sha256": "04919d479e9f2c131b24870c4f23bc53457002b32cfccab9ba0a30bb16739513", "original_outside_sha256": "97413e797d01e795a4542549135f3c7086b965b622865f9b9739acc53d1cc546"},
+    {"time": 3.99, "sha256": "b6a807787f71ebbc5af00f50ec1fb3da6ede198173340e98758652a92d4c5be2", "original_outside_sha256": "6f63a5db05bbc6bea40e42ebccd6b00b3489b290c6ab60e494ed269d9b0861c2"},
+    {"time": 3.995, "sha256": "92970228b3d245f53df4bdfcbaf14e5fd1cecea1fa1020683fd359c0a648b8b0", "original_outside_sha256": "b1de5b8f4374ca5e6097cac8119ffb6da8c5e788f81314e8fa066afa65071248"},
+    {"time": 3.999, "sha256": "93f9b54ad7b9e0b08a7b5ba6bd08f4a3ffb30f88b80f09e29c67da199610f10f", "original_outside_sha256": "3342e94ed0e9cf40222a80d87be7332bc5708efe7a48c3692bdc0e3aea2188ab"},
+    {"time": 4, "sha256": "9cd0be2a2a5f90873705efdedcbaec6b0dbd9c8400c4c0b643461d3818d968b3", "original_outside_sha256": "2895c26a6a95d92b72f85d2b1ff93e6b690c8e39fa9a06aaa8bc4aa6b54dcefd"}
+  ]
+}

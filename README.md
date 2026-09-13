@@ -7,16 +7,16 @@ no allocator, no libc, and no external crates.
 ## Current status
 
 [PLAN.md](PLAN.md) is the active design specification. The new single-function
-flight and Earth-sized world are connected in the normal build, not yet
-accepted. The original foreground stars remain fixed and become unblurred
-points after the wormhole, as approved.
+flight and Earth-sized world are connected in the normal build. Phase 3's
+implementation and automated checks are complete; visual acceptance of the
+detailed descent remains later work. The original foreground stars remain fixed
+and become unblurred points after the wormhole, as approved.
 
-[Integration status and measurements](docs/phase3-integration.md) records two
-failing gates: the resized grid changes a few pixels in the final approximately
-0.02 s of the protected opening, and some low-flight frames exceed the time
-budget. The camera and original star catalogue are byte-identical through 4 s.
-The grid-pixel permission question remains open; no reference images/hashes
-were regenerated.
+[Integration status and measurements](docs/phase3-integration.md) records all
+25 passing gates (25.68-ms worst audit frame; target 33.33 ms). The complete
+2,311-frame render sequence peaked at 27.78 ms. The camera and original star
+catalogue remain exact through 4 s. The limited late-opening grid revision is recorded separately;
+the original references and all pixels outside its 16×16 rectangle are protected.
 
 Use the normal workflow: `make build` / `make run`. There is no separate preview
 target; the executable is `target/x86_64-unknown-linux-gnu/release/termdemo`.
@@ -102,17 +102,47 @@ make check
 make audit-harness
 make audit-study
 make audit-phase3-live
+make profile-phase3-render
 ```
 
 The live audit checks actual camera derivatives at 1,920 Hz, exact opening
 camera/star preservation, protected RGB, independent route agreement, world
 dimensions, tunnel containment, terrain clearance, object topology, clipping,
-rendered grid/star visibility, frame time and playback controls. Results are
-in `target/phase3-audit/result.json`. It currently returns failure for the
-opening-grid conflict and frame time; numerical motion checks do not waive these.
+rendered grid/star/Sun visibility, fixed-plane passage cadence, normal/audit RGB
+parity, serial/parallel RGB and depth, worker-failure recovery, frame time and
+playback controls. Results are in `target/phase3-audit/result.json`; all 25 gates
+currently pass. Timing remains host-dependent, not a universal real-time guarantee.
+The stage profiler records elapsed frame time and total rendering CPU costs in
+`target/phase3-audit/profile.json`, using the existing audit instrumentation.
+It does not create a separate app build or change compilation settings.
 
-The ten harness unit tests use fixtures and negative witnesses. The twelve
-offline study tests check the independent math. Neither suite claims that
+The renderer uses up to three persistent Linux worker children plus the parent.
+They claim eight-row tiles from a shared queue and evaluate the same frame and
+pixel samples. Completed RGB/depth tiles occupy disjoint shared rows. Ordered
+grid commands are binned once per frame, not projected by every worker.
+Serial fallback preserves output if workers cannot
+be started or a channel fails. Normal exit closes and reaps all owned children.
+Wall-time measurements include dispatch and assembly; CPU costs sum all workers,
+not just the parent. No reduction in resolution, spokes or terrain detail.
+
+To profile successive moving frames instead of repeated frozen views:
+
+```sh
+node scripts/profile-phase3-render.cjs --sequence       # 0–77 s, sampled at 30 Hz
+node scripts/profile-phase3-render.cjs --sequence 60 73
+node scripts/profile-phase3-render.cjs --serial 65 70   # same kernel, serial baseline
+make profile-phase3-playback                           # full normal-program PTY run
+```
+
+The sequence profiler reports every budget exceedance and observed host metadata.
+The playback profiler measures completed protocol transmissions and the existing
+timestamp counter through 77 s, including terminal cleanup. Neither claims actual
+Kitty display/compositor FPS or visual approval. Reports remain under
+`target/phase3-audit/`; these are diagnostics, not separate application builds.
+
+The fourteen harness unit tests use fixtures and negative witnesses, including
+the playback counter decoder. The twelve offline study tests check the
+independent math. Neither suite claims that
 the current source is an unchanged phase-1 extraction.
 
 Normal frame comparisons hash RGB in memory; no image baseline is regenerated.
