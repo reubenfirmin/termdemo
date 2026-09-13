@@ -3,7 +3,9 @@
 camera_type FlowCamera
 projection project_flow_depth
 surface_renderer render_flow_surface
-subpixel_surface_lod footprint_weighted_shared_perspective_surface_sample
+surface_raster_owner single_bounded_polygon_lattice
+surface_boundary_cells exact_shared_perspective_surface_sample
+surface_dual_pass_crossfade absent
 surface_line_accents absent
 independent_wire_depth_ownership absent
 depth_buffer shared_grid_surface
@@ -14,12 +16,15 @@ legacy_ray_surface absent
 legacy_scene_constants absent
 dead_code_suppression absent
 seek_state deterministic_camera_and_complete_frame
-frame_seek_times_seconds 27.99,28,51.95926,65,94,137
+frame_seek_times_seconds 27.99,28,40,42,51.95926,53,58,65,94,122,137
+frame_seek_cache cold_first_frame_warm_revisit_bitwise_equal
 controls inherited_phase0_gate
 performance all_required_timeline_checkpoints
 performance_clock process_cpu_excludes_scheduler_contention
-performance_times_seconds 0,4,7,11,14.75,21,27,28,51.95926,65,78,86,94,100,106,137
+performance_times_seconds all_current_event_constants,32,34,38,40,41,42,53,58,65,78,86,94,100,122,137
+performance_cache cold_exact_sample_cache
+performance_status unresolved_53_second_surface_budget
 
-# `make audit-phase7` reruns every phase gate and source-contract check. It
-# verifies complete footprint-weighted surface coverage and deterministic
-# camera state at representative points across the entire timeline.
+# `make audit-flight` runs source checks and every numerical/depth gate, without
+# image baselines and without stopping after a failed phase. The expanded
+# performance checkpoint set must not be reduced to recover the old pass.

@@ -1,34 +1,46 @@
 # Phase 6 shared-shell atmosphere invariants
 
 atmosphere_shell_radius planet_radius_plus_100km
-optical_depth_driver shell_ray_length_and_density
+flight_state_fingerprint_high_low 1120209875,1356210471
+optical_depth_driver exponential_density_integrated_on_actual_visible_ray_interval
+optical_density_scale_height_km 8
+optical_density_quadrature 8_point_gauss_legendre
+optical_interval_clipping nearest_solid_core_surface_or_grid_depth
+short_ray_haze_distance_meters 10
+short_ray_haze_alpha_max 0.005
+optical_interval_additivity_500m_relative_error_max 0.001
+optical_full_upward_column_split_relative_error_max 0.01
+atmosphere_exp_relative_error_max 1e-8_against_longer_reference_1025_samples
 background_attenuation grid_depth_limited
-rendered_grid_optical_sample first_partial-density_fast-entry_pose_between_35_and_60_seconds
+rendered_grid_optical_sample first_partial_density_fast_entry_pose_before_40_seconds
 rendered_grid_optical_alpha bounded_by_full_shell_ray
 space_field_visibility continuous_one_minus_atmospheric_density
-space_field_extinction_seconds 60..90
+space_field_extinction_seconds 41
 space_field_extinction_altitude_feet 30000
-space_field_extinguished_depth_writes zero_at_78_seconds
+space_field_extinguished_depth_writes zero_at_41_seconds
+atmospheric_shading_depth_writes zero_bitwise_depth_fingerprint_unchanged
 surface_attenuation surface_distance_limited
 plasma_driver atmospheric_density_times_measured_speed
 plasma_flow_coordinates camera_ground_track
-cloud_coordinates persistent_surface_normal
+cloud_coordinates persistent_nonperiodic_surface_normal
+cloud_shell_altitude_meters 2000
+cloud_geometry_depth_clipped true
+cloud_max_opacity 0.12
+cloud_unresolved_density zero
+sky_gradient world_ray_elevation_not_screen_row
 sun_direction persistent_world_vector
 sun_depth infinite_rejected_by_foreground_geometry
-sun_airplane_pass_exposure_times_seconds 60,70,80,90
+sun_airplane_pass_exposure_times_seconds 40,41,42,53,55,90,122,137
 sun_airplane_pass_exposure_min_unoccluded_pixels 12
 atmosphere_tile_size_pixels 4
 plasma_tile_size_pixels 2
 representative_frame_limit_ms 33.333334
 representative_frame_clock process_cpu_excludes_scheduler_contention
-representative_times_seconds 65,78,86,94,100,106
+representative_times_seconds physical_entry,32,34,38,40,41,42,53,58,65,78,90,106,122,137
+representative_frame_cache cold_exact_surface_sample_cache
+performance_status failing_53_second_surface_cost
 
-# `make audit-phase6` reruns every earlier gate. It verifies altitude-driven
-# shell activation, denser downward optical depth, grid depth recording,
-# speed-coupled plasma, invariant cloud coordinates, actual rendered-grid
-# attenuation at a physical partial-density entry pose through the same
-# production depth-limited ray function, complete field extinction during the
-# 30,000-foot airplane pass, and verifies
-# that the fixed sun is within the frame and exposed by the real surface depth
-# buffer throughout the 30,000-foot pass, and checks the combined
-# surface/atmosphere frame-time ceiling.
+# Numerical/depth audit: printf '*' | the audit binary; `make audit-flight`
+# now includes this gate even if Phase 5 fails. Physical/depth/fixed-sun checks
+# pass, but the combined frame budget remains a failure. It is not permissible
+# to remove the 53-second witness or reduce geometry to hide that failure.

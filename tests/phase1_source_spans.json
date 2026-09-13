@@ -1,0 +1,82 @@
+{
+  "purpose": "Pre-extraction ACTUAL raw source-span hashes. These prove module-aware source reading preserves the previous measurements; they do NOT replace legacy approved hashes or waive their existing failures.",
+  "spans": [
+    {
+      "names": [
+        "approach_camera_reference"
+      ],
+      "trailing": "\n",
+      "sha256": "c8a78854eef5bc5429084fed6f4544adc9130f342eef0ce3c92858166ea6c58e"
+    },
+    {
+      "names": [
+        "world_curve_capture_frame",
+        "world_curve_capture_geometry"
+      ],
+      "trailing": "",
+      "sha256": "dee81eb58966291c12df694caadb92858507f67273a2c8431b5ddfcea17879c3"
+    },
+    {
+      "names": [
+        "world_curve_spiral_base_radius",
+        "world_curve_spiral_radius_value"
+      ],
+      "trailing": "\n",
+      "sha256": "deb6d427f35e27c4696c95c346528ade2720e7d964e9107cafdb4fb0ccc6ee2a"
+    },
+    {
+      "names": [
+        "world_curve_orbit_normal",
+        "world_curve_frame_rotation",
+        "world_curve_regional_frame",
+        "world_curve_regional_phase",
+        "world_curve_late_normal"
+      ],
+      "trailing": "\n",
+      "sha256": "2b626a5af6c46576547824c604ca3efe3feffe27fea339f087d590e5fceaad86"
+    },
+    {
+      "names": [
+        "starflight_displacement"
+      ],
+      "trailing": "\n",
+      "sha256": "28598df5ea34b8bcb482441ba49afb50a866230f260afff83f7f99e8c27c634a"
+    },
+    {
+      "names": [
+        "decelerating_approach_component"
+      ],
+      "trailing": "\n",
+      "sha256": "27a4002f04ecbb72dbb381015725c8632b52a040494315d3f85ab6eed718987a"
+    },
+    {
+      "names": [
+        "background_star_position"
+      ],
+      "trailing": "\n",
+      "sha256": "16444f827f2daf49f9c7f1a90ff382e2ed12975a6f87da632d2b2cee9bcf89dc"
+    },
+    {
+      "names": [
+        "clip_exposure_half_space",
+        "project_field_star_exposure"
+      ],
+      "trailing": "\n",
+      "sha256": "2f871bef070aabc9cd67d99e91652c2f67fc1bc05e10a5339b00e7aa31522b97"
+    },
+    {
+      "names": [
+        "flyby_segment"
+      ],
+      "trailing": "\n",
+      "sha256": "230a7e8db698a84157f95828cc314b84f38c4a342bfb637605288abc7a8666e5"
+    },
+    {
+      "names": [
+        "canonical_flyby_segment"
+      ],
+      "trailing": "\n",
+      "sha256": "f4dee75ac62a1c1314117cae7baafcc28547932f9ce76c73c2d3ca134e7feb4a"
+    }
+  ]
+}

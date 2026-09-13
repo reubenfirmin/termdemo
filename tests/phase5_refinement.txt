@@ -1,28 +1,47 @@
 # Phase 5 continuous-refinement invariants
 
-height_parent_cells 64
-height_range_cells 16
-height_mountain_cells 4
-height_valley_cells 1
+flight_state_fingerprint_high_low 1120209875,1356210471
+flight_state_preservation exact_all_stored_position_velocity_acceleration_phase_phase_rate_values
+continent_basin_wavelengths_miles 2048,320
+ridge_wavelengths_miles 64,16,4,1,0.25
+terrain_coordinates permanent_nonperiodic_spherical_and_regional_chart
+domain_warp_wavelengths_miles 160,220
+inherited_floor_hierarchy_cells 64,16,4,1
+inherited_floor_support_miles full_within_0.25_blends_out_by_0.75
+old_tile_period_nonrepetition_miles 256
+old_tile_period_distinct_height_samples_min 24_of_32
+drainage asymmetric_trunk_and_five_fixed_tributaries
 regional_valley_excavation_half_width_miles 44
 local_valley_final_wall_half_width_miles 0.75
 local_valley_final_floor_half_width_miles 0.25
 local_valley_upstream_shape broad_funnel
 local_valley_wall_relief_min_miles 0.10
-local_valley_wall_render_time_seconds 122
+local_valley_wall_render_times_seconds 58,90,122,137
 local_valley_wall_projection both_frame_halves_min_16_depth_owned_pixels
 local_valley_ground_track persistent_world_space
+local_valley_downstream_continuation beyond_flight_endpoint_no_closing_wall
+local_valley_chart_wrap absent_no_256_mile_canyon_copies
+surface_intersection bounded_relief_shell_bracket_safeguarded_secant_bisection
+above_floor_wall_rays_min 8
+above_floor_wall_validation canonical_residual_below_1m_or_sign_bracket_across_0.5m
+high_pass_times_seconds 40,41,42
+high_pass_landmark_rays 48
+high_pass_persistent_moving_landmarks_min 12
+high_pass_material_bins_min 8
+high_pass_terrain_coverage_percent_required 70..85
+high_pass_terrain_coverage_percent_observed 66.1
+high_pass_framing_status failing_user_choice_pending_camera_frozen
 lod_driver projected_surface_footprint
 lod_order continent_range_mountain_valley
 full_lod reconstructs_source_height
 landmark_coordinate permanent_surface_normal
 maximum_geomorph_motion_per_frame_pixels 1
-valley_overhead_seconds 94
+valley_overhead_seconds 53
 valley_visible_before_entry true
 valley_overhead_projection inside_frame
 valley_overhead_depth_error_max_fraction 0.05
 valley_overhead_surface_normal_dot_min 0.99999
-valley_track_dense_samples_seconds 94..137/0.25
+valley_track_dense_samples_seconds 53..137/0.25
 valley_track_floor_ownership true
 valley_track_named_controls_cross_track monotonic_toward_centreline
 valley_track_endpoint_cross_track_max 0.05
@@ -30,15 +49,18 @@ orbital_detail continent_only
 orbital_continent_ocean_separation true
 active_vertex_biome_color_distance_minimum 18
 color_inputs elevation,moisture,warmth,coast,range,mountain,valley,sun
+triangle_light_source geometric_face_normal_and_fixed_sun
+city_block_period_miles 0.125
+unresolved_city_detail filtered_average_roof_and_night_light
+terrain_cache exact_normal_bits_only_fully_resolved_heights
+terrain_cache_correctness bitwise_equal_to_uncached_sample_at_boundary_footprints
+surface_mesh_lattice_pixels 4
+boundary_coverage exact_pixel_ray_fallback
+performance_status unresolved_53_second_frame_over_33.333334ms
 
-# `make audit-phase5` reruns every earlier gate. It checks ordered monotonic LOD
-# weights, exact telescoping reconstruction, fixed spherical landmark
-# directions, active biome-color diversity, continent/ocean separation,
-# subpixel frame-to-frame morphing, and visibility of the actual destination
-# valley at the overhead checkpoint using the rendered depth and surface normal
-# rather than merely checking that the point lies in front of the camera. It
-# then samples the camera track every quarter-second through 137 seconds to
-# prove that low flight remains on the nested valley floor and converges on its
-# centreline. The old 88-mile excavation remains its regional parent; a
-# persistent upstream funnel narrows to a 1.5-mile wall-to-wall local valley,
-# whose two final walls are independently required to rise above the floor.
+# Numerical/depth audit: printf '&' | the audit binary; `make audit-flight`
+# exercises every numerical phase without image baselines, retaining failure
+# status while continuing through later gates. The Phase 5 audit currently
+# reaches its FINAL framing failure after all geometry/material/cache gates
+# pass. Do not lower its target or claim visual approval. The 122-second wall
+# witness remains in place and now passes, with earlier/later views added.

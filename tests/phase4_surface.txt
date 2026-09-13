@@ -7,8 +7,10 @@ terrain_coordinates shared_surface_normal
 agl_source canonical_displaced_surface
 final_altitude_agl_metres 20
 surface_intersection_source sample_surface_vertex
-subpixel_coverage same_surface_sampler
-polygon_coverage same_surface_sampler
+surface_coverage_owner single_bounded_polygon_lattice
+surface_boundary_coverage exact_pixel_center_same_surface_sampler
+surface_secondary_coverage_pass absent
+surface_opacity_crossfade absent
 surface_line_accents absent
 independent_wire_globe absent
 screen_derived_planet_proxy absent
@@ -22,12 +24,12 @@ depth_convention single_camera_forward_depth
 terminal_aspect_scales 0.5,1,2
 terminal_aspect_vertical_transform unchanged
 terminal_aspect_horizontal_transform shared
-lod_transfer continuous_complete_partition
+lod_transfer continuous_geometry_detail_weights_with_single_raster_owner
 audit_mode numerical_only_no_frame_generation
 
 # The direct '%' audit checks canonical surface placement, deterministic
 # intersection, displaced-surface AGL, near-plane safety, conservative
-# displaced-sphere bounds, aspect behavior, fixed mesh capacity, and continuous
-# ownership transfer between the two raster coverage strategies. Source checks
+# displaced-sphere bounds, aspect behavior, fixed mesh capacity, and nested
+# conservative bounds for the single raster strategy. Source checks
 # separately reject the deleted proxy ellipse, latitude/longitude globe,
 # surface mesh-edge accents, and independent wire/depth path.
